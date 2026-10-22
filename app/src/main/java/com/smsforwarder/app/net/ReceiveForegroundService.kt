@@ -6,7 +6,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.RingtoneManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -27,7 +26,6 @@ import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.notify.InboxNotifier
 import com.smsforwarder.app.otp.OtpParser
 import com.smsforwarder.app.ui.MainActivity
-import com.smsforwarder.app.ui.SmsAlertActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,10 +44,6 @@ class ReceiveForegroundService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val handler = Handler(Looper.getMainLooper())
 
-    private val restoreListening = Runnable {
-        updateListeningNotification(force = true)
-    }
-
     private val watchdog = object : Runnable {
         override fun run() {
             scope.launch { ensureListening(updateUi = false) }
@@ -60,12 +54,17 @@ class ReceiveForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val prefs = (application as SmsForwarderApp).prefs
         when (intent?.action) {
             ACTION_STOP -> {
                 stopSelfSafely()
                 return START_NOT_STICKY
             }
             ACTION_ENSURE -> {
+                if (!prefs.receiveEnabled) {
+                    stopSelfSafely()
+                    return START_NOT_STICKY
+                }
                 // Quiet path from rare alarm — do not flash “Starting…”
                 if (server == null) {
                     startForegroundNow(buildListeningNotification(listeningStatus()))
@@ -80,6 +79,11 @@ class ReceiveForegroundService : Service() {
                 return START_STICKY
             }
             else -> {
+                if (!prefs.receiveEnabled) {
+                    // User turned port OFF — do not reopen
+                    stopSelfSafely()
+                    return START_NOT_STICKY
+                }
                 startForegroundNow(buildListeningNotification(listeningStatus()))
                 registerNetworkCallback()
                 KeepAliveScheduler.schedule(this)
@@ -174,7 +178,7 @@ class ReceiveForegroundService : Service() {
     private fun startLanServer(updateUi: Boolean) {
         val app = application as SmsForwarderApp
         val prefs = app.prefs
-        prefs.receiveEnabled = true
+        if (!prefs.receiveEnabled) return
         try {
             if (server != null) {
                 if (updateUi) handler.post { updateListeningNotification(force = true) }
@@ -266,11 +270,8 @@ class ReceiveForegroundService : Service() {
             )
             // #endregion
 
-            handler.post {
-                startForegroundNow(buildSmsAlertNotification(sender, body, otp))
-                handler.removeCallbacks(restoreListening)
-                handler.postDelayed(restoreListening, ALERT_HOLD_MS)
-            }
+            // Keep FGS notification as Listening…; SMS alert is a separate shade notification
+            handler.post { updateListeningNotification(force = true) }
             InboxNotifier.show(app, sender, body, otp)
         }
     }
@@ -284,21 +285,6 @@ class ReceiveForegroundService : Service() {
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-    private fun fullScreenAlertIntent(sender: String, body: String, otp: String?): PendingIntent {
-        val i = Intent(this, SmsAlertActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(SmsAlertActivity.EXTRA_SENDER, sender)
-            putExtra(SmsAlertActivity.EXTRA_BODY, body)
-            putExtra(SmsAlertActivity.EXTRA_OTP, otp)
-        }
-        return PendingIntent.getActivity(
-            this,
-            (System.currentTimeMillis() % 100000).toInt(),
-            i,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
 
     private fun buildListeningNotification(status: String): Notification {
         return NotificationCompat.Builder(this, SmsForwarderApp.CHANNEL_RECEIVE)
@@ -314,32 +300,8 @@ class ReceiveForegroundService : Service() {
             .build()
     }
 
-    private fun buildSmsAlertNotification(sender: String, body: String, otp: String?): Notification {
-        val title = getString(R.string.notification_title_sms, sender)
-        val text = if (!otp.isNullOrBlank()) "OTP $otp — $body" else body
-        val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-        return NotificationCompat.Builder(this, SmsForwarderApp.CHANNEL_INBOX)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setOngoing(true)
-            .setContentIntent(openAppIntent())
-            .setFullScreenIntent(fullScreenAlertIntent(sender, body, otp), true)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setSound(sound)
-            .setOnlyAlertOnce(false)
-            .setTicker(text.take(80))
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .build()
-    }
-
     private fun stopSelfSafely() {
         handler.removeCallbacks(watchdog)
-        handler.removeCallbacks(restoreListening)
         KeepAliveScheduler.cancel(this)
         networkCallback?.let {
             runCatching {
@@ -356,7 +318,6 @@ class ReceiveForegroundService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(watchdog)
-        handler.removeCallbacks(restoreListening)
         networkCallback?.let {
             runCatching {
                 getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(it)
@@ -379,7 +340,6 @@ class ReceiveForegroundService : Service() {
         private const val NOTIFICATION_ID = 42
         /** Soft check every 5 min — only restarts socket if missing. */
         private const val WATCHDOG_MS = 5 * 60 * 1000L
-        private const val ALERT_HOLD_MS = 10_000L
         const val ACTION_STOP = "com.smsforwarder.app.STOP_RECEIVE"
         const val ACTION_ENSURE = "com.smsforwarder.app.ENSURE_RECEIVE"
 

@@ -11,6 +11,12 @@ enum class AppRole {
     RECEIVER
 }
 
+enum class ThemeMode {
+    SYSTEM,
+    LIGHT,
+    DARK
+}
+
 class Prefs(context: Context) {
     private val appContext = context.applicationContext
     private val sp: SharedPreferences =
@@ -87,6 +93,14 @@ class Prefs(context: Context) {
         SecretStore.write(appContext, s)
     }
 
+    var themeMode: ThemeMode
+        get() = runCatching {
+            ThemeMode.valueOf(sp.getString(KEY_THEME, ThemeMode.SYSTEM.name)!!)
+        }.getOrDefault(ThemeMode.SYSTEM)
+        set(value) {
+            sp.edit().putString(KEY_THEME, value.name).commit()
+        }
+
     companion object {
         const val PREFS_NAME = "sms_forwarder"
         private const val KEY_ROLE = "role"
@@ -96,5 +110,6 @@ class Prefs(context: Context) {
         private const val KEY_SENDER_ENABLED = "sender_enabled"
         private const val KEY_HOST = "receiver_host"
         private const val KEY_PORT = "receiver_port"
+        private const val KEY_THEME = "theme_mode"
     }
 }

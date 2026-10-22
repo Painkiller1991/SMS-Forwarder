@@ -18,16 +18,24 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.zxing.integration.android.IntentIntegrator
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.data.AppRole
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.net.ReceiveForegroundService
+import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.net.ServiceWatchdog
 import com.smsforwarder.app.pairing.PairingParser
 import com.smsforwarder.app.ui.screens.ReceiverScreen
@@ -49,9 +57,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            SmsForwarderTheme {
+            val vm: MainViewModel = viewModel()
+            val state by vm.state.collectAsState()
+            SmsForwarderTheme(themeMode = state.themeMode) {
                 AppRoot(
                     activity = this,
+                    vm = vm,
                     requestScan = { callback ->
                         onScanResult = callback
                         val intent = IntentIntegrator(this)
@@ -68,7 +79,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        // If UI process is dying while receive is on, keep :recv alive / restart soon
         val prefs = (application as? SmsForwarderApp)?.prefs
         if (prefs?.role == AppRole.RECEIVER && prefs.receiveEnabled) {
             ServiceWatchdog.scheduleSoon(applicationContext)
@@ -98,14 +108,29 @@ class MainActivity : ComponentActivity() {
     }
 
     fun hasSmsPermission(): Boolean {
-        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) ==
+        val receive = ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) ==
             PackageManager.PERMISSION_GRANTED
+        val read = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) ==
+            PackageManager.PERMISSION_GRANTED
+        return receive && read
     }
 
     fun hasNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
+    }
+
+    fun needsBatteryUnrestricted(): Boolean {
+        val pm = getSystemService(PowerManager::class.java) ?: return false
+        return !pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    fun needsAutofillSetup(): Boolean {
+        val am = getSystemService(AutofillManager::class.java) ?: return false
+        if (!am.isAutofillSupported) return false
+        val selected = Settings.Secure.getString(contentResolver, "autofill_service")
+        return selected.isNullOrBlank() || !selected.contains(packageName)
     }
 
     fun sendDebugPing() {
@@ -123,7 +148,7 @@ class MainActivity : ComponentActivity() {
     fun copyDebugLog() {
         val text = AgentDebugLog.readAll(this)
         if (text.isBlank()) {
-            Toast.makeText(this, "No debug log yet — tap Write debug ping first", Toast.LENGTH_SHORT)
+            Toast.makeText(this, "No debug log yet — use menu → Write debug ping first", Toast.LENGTH_SHORT)
                 .show()
             return
         }
@@ -157,14 +182,37 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppRoot(
     activity: MainActivity,
+    vm: MainViewModel,
     requestScan: ((String?) -> Unit) -> Unit
 ) {
-    val vm: MainViewModel = viewModel()
     val state by vm.state.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    var hasSmsPermission by remember { mutableStateOf(activity.hasSmsPermission()) }
+    var hasNotificationPermission by remember { mutableStateOf(activity.hasNotificationPermission()) }
+    var needsBatteryUnrestricted by remember { mutableStateOf(activity.needsBatteryUnrestricted()) }
+    var needsAutofillSetup by remember { mutableStateOf(activity.needsAutofillSetup()) }
+
+    fun refreshDeviceFlags() {
+        hasSmsPermission = activity.hasSmsPermission()
+        hasNotificationPermission = activity.hasNotificationPermission()
+        needsBatteryUnrestricted = activity.needsBatteryUnrestricted()
+        needsAutofillSetup = activity.needsAutofillSetup()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshDeviceFlags()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { }
+    ) {
+        refreshDeviceFlags()
+    }
 
     fun requestSenderPermissions() {
         val perms = mutableListOf(
@@ -186,6 +234,10 @@ private fun AppRoot(
 
     when (state.role) {
         AppRole.NONE -> RolePickerScreen(
+            themeMode = state.themeMode,
+            onThemeMode = vm::setThemeMode,
+            onDebugPing = { activity.sendDebugPing() },
+            onCopyDebugLog = { activity.copyDebugLog() },
             onChooseSender = {
                 requestSenderPermissions()
                 vm.setRole(AppRole.SENDER)
@@ -198,7 +250,7 @@ private fun AppRoot(
 
         AppRole.SENDER -> SenderScreen(
             state = state,
-            hasSmsPermission = activity.hasSmsPermission(),
+            hasSmsPermission = hasSmsPermission,
             onEnableChange = vm::setSenderEnabled,
             onScanQr = {
                 requestScan { contents ->
@@ -225,6 +277,7 @@ private fun AppRoot(
                     Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()
                 }
             },
+            onThemeMode = vm::setThemeMode,
             onSendDebugPing = { activity.sendDebugPing() },
             onCopyDebugLog = { activity.copyDebugLog() },
             onChangeRole = { vm.setRole(AppRole.NONE) }
@@ -235,7 +288,9 @@ private fun AppRoot(
             ReceiverScreen(
                 state = state,
                 messages = state.messages,
-                hasNotificationPermission = activity.hasNotificationPermission(),
+                hasNotificationPermission = hasNotificationPermission,
+                needsBatteryUnrestricted = needsBatteryUnrestricted,
+                needsAutofillSetup = needsAutofillSetup,
                 onToggleReceive = { enabled ->
                     requestReceiverPermissions()
                     vm.setReceiveEnabled(activity, enabled)
@@ -254,12 +309,13 @@ private fun AppRoot(
                         Toast.makeText(activity, "No Wi‑Fi IP yet", Toast.LENGTH_SHORT).show()
                     } else {
                         val text =
-                            "IP: $ip\nPort: ${com.smsforwarder.app.net.ReceiveServer.DEFAULT_PORT}\nSecret: ${state.sharedSecret}"
+                            "IP: $ip\nPort: ${ReceiveServer.DEFAULT_PORT}\nSecret: ${state.sharedSecret}"
                         val cm = activity.getSystemService(ClipboardManager::class.java)
                         cm.setPrimaryClip(ClipData.newPlainText("lan-address", text))
                         Toast.makeText(activity, "Copied IP, port, secret", Toast.LENGTH_SHORT).show()
                     }
                 },
+                onThemeMode = vm::setThemeMode,
                 onSendDebugPing = { activity.sendDebugPing() },
                 onCopyDebugLog = { activity.copyDebugLog() },
                 onChangeRole = { vm.setRole(AppRole.NONE) }

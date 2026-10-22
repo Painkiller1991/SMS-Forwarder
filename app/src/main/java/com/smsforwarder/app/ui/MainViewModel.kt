@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.data.AppRole
 import com.smsforwarder.app.data.MessageEntity
+import com.smsforwarder.app.data.ThemeMode
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.net.ForwardClient
 import com.smsforwarder.app.net.KeepAliveScheduler
@@ -33,6 +34,7 @@ data class UiState(
     val receiverPort: Int = ReceiveServer.DEFAULT_PORT,
     val pairingPayload: String = "",
     val localIp: String = "",
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val messages: List<MessageEntity> = emptyList()
 )
 
@@ -72,9 +74,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 receiverHost = prefs.receiverHost,
                 receiverPort = prefs.receiverPort,
                 pairingPayload = payload,
-                localIp = ip
+                localIp = ip,
+                themeMode = prefs.themeMode
             )
         }
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        prefs.themeMode = mode
+        refreshFromPrefs()
     }
 
     fun refreshPairingQr() {
@@ -111,6 +119,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setReceiveEnabled(context: Context, enabled: Boolean) {
+        // Prefs first so watchdog / onDestroy cannot reopen the port after OFF
+        prefs.receiveEnabled = enabled
         if (enabled) {
             prefs.paired = true
             ReceiveForegroundService.start(context)
@@ -119,7 +129,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             KeepAliveScheduler.cancel(context)
             ReceiveForegroundService.stop(context)
         }
-        prefs.receiveEnabled = enabled
         refreshFromPrefs()
     }
 
