@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SMS WiFi Forwarder</string>
+    <string name="receive_channel_name">SMS receive server</string>
+    <string name="receive_channel_desc">Keeps the local Wi‑Fi listener running while Receive mode is on</string>
+    <string name="inbox_channel_name">Forwarded SMS</string>
+    <string name="inbox_channel_desc">Shows SMS forwarded from the sender device</string>
+    <string name="autofill_service_description">Suggests OTP codes from SMS forwarded over Wi‑Fi</string>
+    <string name="copy_otp">Copy OTP</string>
+    <string name="notification_title_sms">SMS from %1$s</string>
+</resources>
