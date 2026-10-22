@@ -23,7 +23,7 @@ class SmsForwarderApp : Application() {
         instance = this
         database = AppDatabase.create(this)
         prefs = Prefs(this)
-        otpStore = OtpStore()
+        otpStore = OtpStore(this)
         AgentDebugLog.init(this)
         installCrashLogger()
         createNotificationChannels()

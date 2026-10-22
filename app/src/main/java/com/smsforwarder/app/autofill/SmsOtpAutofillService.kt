@@ -20,6 +20,7 @@ class SmsOtpAutofillService : AutofillService() {
         cancellationSignal: CancellationSignal,
         callback: FillCallback
     ) {
+        // Reads file-backed store so OTP written in :recv is visible here
         val otp = (application as SmsForwarderApp).otpStore.getValid()
         if (otp == null) {
             callback.onSuccess(null)
