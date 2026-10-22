@@ -3,6 +3,7 @@ package com.smsforwarder.app.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.smsforwarder.app.net.ReceiveServer
+import java.io.File
 import java.util.UUID
 
 enum class AppRole {
@@ -56,9 +57,16 @@ class Prefs(context: Context) {
         }
 
     var receiveEnabled: Boolean
-        get() = sp.getBoolean(KEY_RECEIVE_ENABLED, false)
+        get() {
+            // File is source of truth across UI + :recv processes
+            if (File(appContext.filesDir, "listen_enabled.flag").exists()) {
+                return ListenFlag.read(appContext)
+            }
+            return sp.getBoolean(KEY_RECEIVE_ENABLED, false)
+        }
         set(value) {
             sp.edit().putBoolean(KEY_RECEIVE_ENABLED, value).commit()
+            ListenFlag.write(appContext, value)
         }
 
     var senderEnabled: Boolean

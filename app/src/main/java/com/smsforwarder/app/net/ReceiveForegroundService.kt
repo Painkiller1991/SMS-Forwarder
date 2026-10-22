@@ -20,9 +20,11 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.smsforwarder.app.R
 import com.smsforwarder.app.SmsForwarderApp
+import com.smsforwarder.app.data.ListenFlag
 import com.smsforwarder.app.data.MessageEntity
 import com.smsforwarder.app.data.SecretStore
 import com.smsforwarder.app.debug.AgentDebugLog
+import androidx.core.content.ContextCompat
 import com.smsforwarder.app.notify.InboxNotifier
 import com.smsforwarder.app.otp.OtpParser
 import com.smsforwarder.app.ui.MainActivity
@@ -54,45 +56,57 @@ class ReceiveForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val prefs = (application as SmsForwarderApp).prefs
+        // File flag is visible across UI + :recv (SharedPreferences is not)
+        val listenOn = ListenFlag.read(this)
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H_ON",
+            location = "ReceiveForegroundService.onStartCommand",
+            message = "Service start command",
+            data = mapOf(
+                "action" to (intent?.action ?: "START"),
+                "listenOn" to listenOn,
+                "serverUp" to (server != null)
+            ),
+            runId = "listen-toggle"
+        )
+        // #endregion
         when (intent?.action) {
             ACTION_STOP -> {
+                if (listenOn) {
+                    // Stale STOP after user already turned ON again — start instead
+                    beginListening()
+                    return START_STICKY
+                }
                 stopSelfSafely()
                 return START_NOT_STICKY
             }
             ACTION_ENSURE -> {
-                if (!prefs.receiveEnabled) {
+                if (!listenOn) {
                     stopSelfSafely()
                     return START_NOT_STICKY
                 }
-                // Quiet path from rare alarm — do not flash “Starting…”
-                if (server == null) {
-                    startForegroundNow(buildListeningNotification(listeningStatus()))
-                } else {
-                    startForegroundNow(buildListeningNotification(lastStatus.ifBlank { listeningStatus() }))
-                }
-                registerNetworkCallback()
-                KeepAliveScheduler.schedule(this)
-                scope.launch { ensureListening(updateUi = server == null) }
-                handler.removeCallbacks(watchdog)
-                handler.postDelayed(watchdog, WATCHDOG_MS)
+                beginListening()
                 return START_STICKY
             }
             else -> {
-                if (!prefs.receiveEnabled) {
-                    // User turned port OFF — do not reopen
+                if (!listenOn) {
                     stopSelfSafely()
                     return START_NOT_STICKY
                 }
-                startForegroundNow(buildListeningNotification(listeningStatus()))
-                registerNetworkCallback()
-                KeepAliveScheduler.schedule(this)
-                scope.launch { startLanServer(updateUi = true) }
-                handler.removeCallbacks(watchdog)
-                handler.postDelayed(watchdog, WATCHDOG_MS)
+                beginListening()
             }
         }
         return START_STICKY
+    }
+
+    private fun beginListening() {
+        startForegroundNow(buildListeningNotification(listeningStatus()))
+        registerNetworkCallback()
+        KeepAliveScheduler.schedule(this)
+        scope.launch { startLanServer(updateUi = true) }
+        handler.removeCallbacks(watchdog)
+        handler.postDelayed(watchdog, WATCHDOG_MS)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -178,7 +192,7 @@ class ReceiveForegroundService : Service() {
     private fun startLanServer(updateUi: Boolean) {
         val app = application as SmsForwarderApp
         val prefs = app.prefs
-        if (!prefs.receiveEnabled) return
+        if (!ListenFlag.read(this)) return
         try {
             if (server != null) {
                 if (updateUi) handler.post { updateListeningNotification(force = true) }
@@ -221,8 +235,7 @@ class ReceiveForegroundService : Service() {
     }
 
     private fun ensureListening(updateUi: Boolean) {
-        val app = application as SmsForwarderApp
-        if (!app.prefs.receiveEnabled) return
+        if (!ListenFlag.read(this)) return
         if (server == null) {
             // #region agent log
             AgentDebugLog.log(
@@ -309,7 +322,7 @@ class ReceiveForegroundService : Service() {
             }
         }
         networkCallback = null
-        (application as? SmsForwarderApp)?.prefs?.receiveEnabled = false
+        // Do not clear ListenFlag / prefs here — UI owns ON/OFF (avoids race with quick OFF→ON)
         runCatching { server?.stop() }
         server = null
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -327,8 +340,7 @@ class ReceiveForegroundService : Service() {
         runCatching { server?.stop() }
         server = null
         scope.cancel()
-        val prefs = (application as? SmsForwarderApp)?.prefs
-        if (prefs?.receiveEnabled == true) {
+        if (ListenFlag.read(applicationContext)) {
             KeepAliveScheduler.schedule(applicationContext)
             ensure(applicationContext)
         }
@@ -344,12 +356,16 @@ class ReceiveForegroundService : Service() {
         const val ACTION_ENSURE = "com.smsforwarder.app.ENSURE_RECEIVE"
 
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, ReceiveForegroundService::class.java))
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, ReceiveForegroundService::class.java)
+            )
         }
 
         /** Quiet re-entry from alarm — avoids start/stop flicker. */
         fun ensure(context: Context) {
-            context.startForegroundService(
+            ContextCompat.startForegroundService(
+                context,
                 Intent(context, ReceiveForegroundService::class.java).apply {
                     action = ACTION_ENSURE
                 }
@@ -357,7 +373,8 @@ class ReceiveForegroundService : Service() {
         }
 
         fun stop(context: Context) {
-            context.startService(
+            ContextCompat.startForegroundService(
+                context,
                 Intent(context, ReceiveForegroundService::class.java).apply { action = ACTION_STOP }
             )
         }

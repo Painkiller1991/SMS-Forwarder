@@ -119,8 +119,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setReceiveEnabled(context: Context, enabled: Boolean) {
-        // Prefs first so watchdog / onDestroy cannot reopen the port after OFF
+        // Write cross-process flag before starting/stopping :recv
         prefs.receiveEnabled = enabled
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H_ON",
+            location = "MainViewModel.setReceiveEnabled",
+            message = "Listening port toggled",
+            data = mapOf("enabled" to enabled),
+            runId = "listen-toggle"
+        )
+        // #endregion
         if (enabled) {
             prefs.paired = true
             ReceiveForegroundService.start(context)
