@@ -202,7 +202,12 @@ private fun AppRoot(
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) refreshDeviceFlags()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshDeviceFlags()
+                if (vm.state.value.role == AppRole.SENDER) {
+                    vm.verifySenderPairing()
+                }
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -251,6 +256,7 @@ private fun AppRoot(
         AppRole.SENDER -> SenderScreen(
             state = state,
             hasSmsPermission = hasSmsPermission,
+            needsBatteryUnrestricted = needsBatteryUnrestricted,
             onEnableChange = vm::setSenderEnabled,
             onScanQr = {
                 requestScan { contents ->
@@ -258,17 +264,18 @@ private fun AppRoot(
                     if (info == null) {
                         Toast.makeText(activity, "Invalid QR", Toast.LENGTH_SHORT).show()
                     } else {
-                        vm.applyPairing(info)
-                        Toast.makeText(activity, "Paired → ${info.host}:${info.port}", Toast.LENGTH_SHORT).show()
+                        vm.applyPairing(info) { ok, detail ->
+                            Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()
+                        }
                     }
                 }
             },
             onSaveEndpoint = { host, port, secret ->
-                val err = vm.saveManualEndpoint(host, port, secret)
+                val err = vm.saveManualEndpoint(host, port, secret) { _, detail ->
+                    Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()
+                }
                 if (err != null) {
                     Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(activity, "Saved → $host:$port", Toast.LENGTH_SHORT).show()
                 }
             },
             onRequestSmsPermission = { requestSenderPermissions() },
@@ -277,6 +284,7 @@ private fun AppRoot(
                     Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()
                 }
             },
+            onBatteryUnrestricted = { activity.requestBatteryUnrestricted() },
             onThemeMode = vm::setThemeMode,
             onSendDebugPing = { activity.sendDebugPing() },
             onCopyDebugLog = { activity.copyDebugLog() },

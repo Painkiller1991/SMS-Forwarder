@@ -17,6 +17,7 @@ import com.smsforwarder.app.net.SenderKeepAliveService
 import com.smsforwarder.app.net.WifiIp
 import com.smsforwarder.app.pairing.PairingInfo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,7 +29,9 @@ data class UiState(
     val role: AppRole = AppRole.NONE,
     val senderEnabled: Boolean = false,
     val receiveEnabled: Boolean = false,
+    /** True only after a successful reachability check to the receiver. */
     val paired: Boolean = false,
+    val pairCheckInProgress: Boolean = false,
     val sharedSecret: String = "",
     val receiverHost: String = "",
     val receiverPort: Int = ReceiveServer.DEFAULT_PORT,
@@ -41,6 +44,7 @@ data class UiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as SmsForwarderApp
     private val prefs = app.prefs
+    private var pairVerifyJob: Job? = null
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -52,6 +56,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (prefs.role == AppRole.SENDER && prefs.senderEnabled && prefs.paired) {
             SenderKeepAliveService.start(application)
+        }
+        if (prefs.role == AppRole.SENDER) {
+            verifySenderPairing()
         }
         viewModelScope.launch {
             app.database.messageDao().observeAll().collect { list ->
@@ -80,6 +87,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Hits receiver `/health`. Updates [Prefs.paired] and keep-alive from the live result.
+     * Call on app open (sender) and after every Save / QR pair.
+     */
+    fun verifySenderPairing(onDone: ((ok: Boolean, detail: String) -> Unit)? = null) {
+        if (prefs.role != AppRole.SENDER) {
+            onDone?.invoke(false, "Not in send mode")
+            return
+        }
+        val host = prefs.receiverHost.trim()
+        val port = prefs.receiverPort
+        val secret = prefs.sharedSecret
+        if (host.isBlank() || secret.isBlank()) {
+            applySenderPairedResult(false)
+            onDone?.invoke(false, "Enter IP, port, and secret")
+            return
+        }
+        pairVerifyJob?.cancel()
+        pairVerifyJob = viewModelScope.launch {
+            // Clear sticky "Paired" immediately while checking.
+            prefs.paired = false
+            _state.update {
+                it.copy(pairCheckInProgress = true, paired = false)
+            }
+            val result = withContext(Dispatchers.IO) {
+                ForwardClient.health(host, port)
+            }
+            val ok = result.isSuccess
+            applySenderPairedResult(ok)
+            _state.update { it.copy(pairCheckInProgress = false, paired = ok) }
+            onDone?.invoke(
+                ok,
+                if (ok) {
+                    "Paired — reachable at $host:$port"
+                } else {
+                    "Unreachable — ${result.exceptionOrNull()?.message ?: "cannot reach receiver"}"
+                }
+            )
+        }
+    }
+
+    private fun applySenderPairedResult(ok: Boolean) {
+        val ctx = getApplication<Application>()
+        prefs.paired = ok
+        if (ok && prefs.senderEnabled) {
+            SenderKeepAliveService.start(ctx)
+        } else {
+            SenderKeepAliveService.stop(ctx)
+        }
+        refreshFromPrefs()
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         prefs.themeMode = mode
         refreshFromPrefs()
@@ -103,8 +162,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.role = role
         if (role == AppRole.RECEIVER) {
             prefs.paired = true
+            refreshFromPrefs()
+        } else if (role == AppRole.SENDER) {
+            prefs.paired = false
+            refreshFromPrefs()
+            verifySenderPairing()
+        } else {
+            refreshFromPrefs()
         }
-        refreshFromPrefs()
     }
 
     fun setSenderEnabled(enabled: Boolean) {
@@ -141,17 +206,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshFromPrefs()
     }
 
-    fun applyPairing(info: PairingInfo) {
+    fun applyPairing(info: PairingInfo, onVerified: ((ok: Boolean, detail: String) -> Unit)? = null) {
         prefs.applyPairing(info.secret, info.host, info.port)
-        val ctx = getApplication<Application>()
-        if (prefs.senderEnabled) {
-            SenderKeepAliveService.start(ctx)
-        }
-        refreshFromPrefs()
+        applySenderPairedResult(false)
+        verifySenderPairing(onVerified)
     }
 
-    /** Manual IP / port / secret — no QR required. */
-    fun saveManualEndpoint(host: String, portText: String, secret: String): String? {
+    /**
+     * Manual IP / port / secret. Returns a sync validation error, or null if saved —
+     * then [verifySenderPairing] runs and reports reachability via [onVerified].
+     */
+    fun saveManualEndpoint(
+        host: String,
+        portText: String,
+        secret: String,
+        onVerified: ((ok: Boolean, detail: String) -> Unit)? = null
+    ): String? {
         val h = host.trim()
         val s = secret.trim()
         val p = portText.trim().toIntOrNull() ?: return "Port must be a number (e.g. 18765)"
@@ -159,9 +229,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (s.length < 16) return "Secret too short — copy from receiver or scan QR"
         if (p !in 1..65535) return "Port out of range"
         prefs.applyPairing(s, h, p)
-        val ctx = getApplication<Application>()
-        if (prefs.senderEnabled) SenderKeepAliveService.start(ctx)
-        refreshFromPrefs()
+        applySenderPairedResult(false)
+        verifySenderPairing(onVerified)
         return null
     }
 

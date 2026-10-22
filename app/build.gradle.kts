@@ -14,8 +14,8 @@ android {
         applicationId = "com.smsforwarder.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "3.0.8-lan"
+        versionCode = 26
+        versionName = "3.1.1-lan"
     }
 
     buildTypes {

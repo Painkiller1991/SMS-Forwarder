@@ -90,13 +90,13 @@ class Prefs(context: Context) {
     fun pairingPayload(localIp: String): String =
         "smsfw://pair?ip=$localIp&port=${ReceiveServer.DEFAULT_PORT}&s=$sharedSecret"
 
+    /** Saves endpoint credentials. Does not mark paired — caller must verify reachability. */
     fun applyPairing(secret: String, host: String, port: Int) {
         val s = secret.trim()
         sp.edit()
             .putString(KEY_SECRET, s)
             .putString(KEY_HOST, host.trim())
             .putInt(KEY_PORT, port)
-            .putBoolean(KEY_PAIRED, true)
             .commit()
         SecretStore.write(appContext, s)
     }
