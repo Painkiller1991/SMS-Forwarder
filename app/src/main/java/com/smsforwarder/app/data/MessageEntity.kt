@@ -9,5 +9,6 @@ data class MessageEntity(
     val sender: String,
     val body: String,
     val receivedAt: Long,
-    val otp: String? = null
+    val otp: String? = null,
+    val pinned: Boolean = false
 )

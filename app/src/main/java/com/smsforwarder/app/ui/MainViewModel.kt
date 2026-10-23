@@ -270,6 +270,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteMessage(id: Long) {
+        viewModelScope.launch {
+            app.database.messageDao().deleteById(id)
+        }
+    }
+
+    fun setMessagePinned(id: Long, pinned: Boolean) {
+        viewModelScope.launch {
+            app.database.messageDao().setPinned(id, pinned)
+        }
+    }
+
     fun testSendToReceiver(onDone: (ok: Boolean, detail: String) -> Unit) {
         viewModelScope.launch {
             if (!prefs.endpointConfigured) {

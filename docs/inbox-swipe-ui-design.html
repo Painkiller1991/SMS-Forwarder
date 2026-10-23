@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Inbox swipe actions — UI design</title>
+  <style>
+    :root {
+      --bg: #f0f2f5;
+      --card: #e8eaed;
+      --on: #1a1c1e;
+      --muted: #5f6368;
+      --otp-bg: #c8e6c9;
+      --otp-fg: #1b5e20;
+      --copy: #1565c0;
+      --pin: #f9a825;
+      --del: #c62828;
+      --pin-chip: #fff8e1;
+      --pin-chip-fg: #f57f17;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--on);
+      padding: 24px 16px 48px;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 0.875rem; margin: 0 0 24px; }
+    .phone {
+      max-width: 360px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 28px;
+      padding: 20px 16px 28px;
+      box-shadow: 0 8px 28px rgba(0,0,0,.08);
+    }
+    .app-bar { font-size: 1.1rem; font-weight: 600; margin-bottom: 20px; }
+    .inbox-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .inbox-head h2 { font-size: 1rem; margin: 0; }
+    .clear {
+      background: #dce8ff;
+      color: #0d47a1;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+    .hint { color: var(--muted); font-size: 0.8rem; margin: 0 0 16px; }
+    .list { display: flex; flex-direction: column; gap: 12px; }
+    .swipe-wrap {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      min-height: 108px;
+    }
+    .actions {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: stretch;
+      justify-content: flex-end;
+      background: #dfe3e8;
+      padding: 8px;
+      gap: 8px;
+    }
+    .act {
+      width: 64px;
+      border: 0;
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      color: #fff;
+      cursor: default;
+      font-size: 0.65rem;
+      font-weight: 600;
+    }
+    .act svg { width: 22px; height: 22px; fill: currentColor; }
+    .act.copy { background: var(--copy); }
+    .act.pin { background: var(--pin); color: #212121; }
+    .act.del { background: var(--del); }
+    .card {
+      position: relative;
+      background: var(--card);
+      border-radius: 16px;
+      padding: 16px;
+      transition: transform .25s ease;
+      z-index: 1;
+    }
+    .swipe-wrap.open .card { transform: translateX(-216px); }
+    .swipe-wrap.pinned-open .card { transform: translateX(-144px); }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .sender { font-weight: 600; }
+    .meta { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .time { font-size: 0.75rem; color: var(--muted); }
+    .pinned-chip {
+      background: var(--pin-chip);
+      color: var(--pin-chip-fg);
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .body { font-size: 0.9rem; line-height: 1.35; margin: 0 0 8px; }
+    .otp {
+      display: inline-block;
+      background: var(--otp-bg);
+      color: var(--otp-fg);
+      font-weight: 700;
+      font-size: 0.8rem;
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 0;
+      cursor: pointer;
+    }
+    .otp:active { opacity: .85; }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      background: #323232;
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s;
+    }
+    .toast.show { opacity: 1; }
+    .legend {
+      max-width: 360px;
+      margin: 28px auto 0;
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .legend strong { color: var(--on); }
+    .toggle {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .toggle button {
+      border: 1px solid #c5c9ce;
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>Inbox swipe actions</h1>
+  <p class="sub">Open this file in a browser. Use the toggle under each card to simulate swipe.</p>
+
+  <div class="phone">
+    <div class="app-bar">Receive mode</div>
+    <div class="inbox-head">
+      <h2>Inbox</h2>
+      <button type="button" class="clear">Clear all</button>
+    </div>
+    <p class="hint">Received messages — Clear all skips pinned</p>
+
+    <div class="list">
+      <div>
+        <div class="swipe-wrap" id="card1">
+          <div class="actions" aria-label="Actions">
+            <button type="button" class="act copy" title="Copy">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+              Copy
+            </button>
+            <button type="button" class="act pin" title="Pin">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+              Pin
+            </button>
+            <button type="button" class="act del" title="Delete">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+              Delete
+            </button>
+          </div>
+          <div class="card">
+            <div class="row">
+              <span class="sender">BankAlert</span>
+              <span class="time">14:22</span>
+            </div>
+            <p class="body">Your verification code is 482917. Valid for 5 minutes.</p>
+            <button type="button" class="otp" id="otpChip">OTP  482917</button>
+          </div>
+        </div>
+        <div class="toggle">
+          <button type="button" data-toggle="card1" data-class="open">Toggle swipe (show / hide actions)</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="swipe-wrap" id="card2">
+          <div class="actions" aria-label="Actions">
+            <button type="button" class="act copy" title="Copy">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+              Copy
+            </button>
+            <button type="button" class="act pin" title="Unpin">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+              Unpin
+            </button>
+          </div>
+          <div class="card">
+            <div class="row">
+              <span class="sender">ShopNotify</span>
+              <span class="meta">
+                <span class="pinned-chip">Pinned</span>
+                <span class="time">13:01</span>
+              </span>
+            </div>
+            <p class="body">Order shipped, tracking ABC123.</p>
+          </div>
+        </div>
+        <div class="toggle">
+          <button type="button" data-toggle="card2" data-class="pinned-open">Toggle swipe (pinned — no Delete)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <p><strong>Closed card:</strong> clean surface; tap OTP chip to copy OTP.</p>
+    <p><strong>Swipe left:</strong> horizontal icons — blue Copy, amber Pin/Unpin, red Delete (hidden when pinned).</p>
+    <p><strong>Clear all:</strong> removes unpinned only.</p>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script>
+    function showToast(text) {
+      var t = document.getElementById("toast");
+      t.textContent = text;
+      t.classList.add("show");
+      clearTimeout(showToast._id);
+      showToast._id = setTimeout(function () { t.classList.remove("show"); }, 1600);
+    }
+    document.getElementById("otpChip").addEventListener("click", function () {
+      showToast("OTP copied");
+    });
+    document.querySelectorAll("[data-toggle]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var el = document.getElementById(btn.getAttribute("data-toggle"));
+        var cls = btn.getAttribute("data-class");
+        el.classList.toggle(cls);
+      });
+    });
+    document.querySelectorAll(".act.copy").forEach(function (b) {
+      b.addEventListener("click", function () { showToast("Message copied"); });
+    });
+    document.querySelectorAll(".act.pin").forEach(function (b) {
+      b.addEventListener("click", function () { showToast(b.title === "Unpin" ? "Unpinned" : "Pinned"); });
+    });
+    document.querySelectorAll(".act.del").forEach(function (b) {
+      b.addEventListener("click", function () { showToast("Deleted"); });
+    });
+  </script>
+</body>
+</html>

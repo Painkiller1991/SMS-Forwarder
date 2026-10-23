@@ -42,6 +42,7 @@ import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.net.SenderKeepAliveService
 import com.smsforwarder.app.net.ServiceWatchdog
+import com.smsforwarder.app.notify.InboxNotifier
 import com.smsforwarder.app.pairing.PairingParser
 import com.smsforwarder.app.ui.components.AppUpdateHost
 import com.smsforwarder.app.ui.components.LocalUpdateOffer
@@ -331,6 +332,21 @@ private fun AppRoot(
                 },
                 onOpenAutofill = { activity.openAutofillSettings() },
                 onClearInbox = vm::clearInbox,
+                onCopyOtp = { otp ->
+                    InboxNotifier.copyOtp(activity, otp)
+                    Toast.makeText(activity, "OTP copied", Toast.LENGTH_SHORT).show()
+                },
+                onCopyBody = { body ->
+                    val cm = activity.getSystemService(ClipboardManager::class.java)
+                    cm.setPrimaryClip(ClipData.newPlainText("sms", body))
+                    Toast.makeText(activity, "Message copied", Toast.LENGTH_SHORT).show()
+                },
+                onTogglePin = { msg ->
+                    vm.setMessagePinned(msg.id, !msg.pinned)
+                },
+                onDeleteMessage = { id ->
+                    vm.deleteMessage(id)
+                },
                 onTestSend = {
                     vm.testSendFromReceiver { _, detail ->
                         Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()

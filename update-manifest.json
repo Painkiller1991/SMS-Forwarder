@@ -1,10 +1,10 @@
 ﻿{
-  "versionCode": 35,
-  "versionName": "3.1.10-lan",
-  "apkAsset": "SMS-Forwarder-3.1.10-lan.apk",
+  "versionCode": 36,
+  "versionName": "3.1.11-lan",
+  "apkAsset": "SMS-Forwarder-3.1.11-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Removed full-screen SMS alert",
-    "Quieter non-OTP notifications (no heads-up)"
+    "Swipe inbox cards for Copy, Pin, Delete",
+    "Tap OTP chip to copy; pinned messages survive Clear all"
   ]
 }
