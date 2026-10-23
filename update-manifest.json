@@ -1,11 +1,10 @@
-{
-  "versionCode": 32,
-  "versionName": "3.1.7-lan",
-  "apkAsset": "SMS-Forwarder-3.1.7-lan.apk",
+﻿{
+  "versionCode": 33,
+  "versionName": "3.1.8-lan",
+  "apkAsset": "SMS-Forwarder-3.1.8-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Update dialog buttons fully visible (Later / Skip)",
-    "Fix receiver bind EADDRINUSE — retry and listen on 0.0.0.0",
-    "Fewer unnecessary rebinds when Wi‑Fi reconnects"
+    "Autofill always uses the latest OTP from disk (no stale in-memory code)",
+    "Fresh OTP for autofill after a new SMS arrives on the receiver"
   ]
 }

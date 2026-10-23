@@ -34,20 +34,25 @@ class OtpStore(
         }
     }
 
+    /**
+     * Always re-reads disk so Autofill (separate process) sees OTPs written by :recv.
+     * Picks the newest non-expired OTP by [StoredOtp.storedAt]; updates the mem cache.
+     */
     fun getValid(): StoredOtp? {
         val mem = latest.get()
-        if (mem != null && !isExpired(mem)) return mem
+        val fromDisk = readFile()
 
-        val fromDisk = readFile() ?: run {
-            latest.set(null)
+        val newest = sequenceOf(mem, fromDisk)
+            .filterNotNull()
+            .filter { !isExpired(it) }
+            .maxByOrNull { it.storedAt }
+
+        if (newest == null) {
+            if (fromDisk != null) clear() else latest.set(null)
             return null
         }
-        if (isExpired(fromDisk)) {
-            clear()
-            return null
-        }
-        latest.set(fromDisk)
-        return fromDisk
+        latest.set(newest)
+        return newest
     }
 
     fun clear() {

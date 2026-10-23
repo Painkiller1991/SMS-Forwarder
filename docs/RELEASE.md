@@ -80,11 +80,11 @@ If you need to publish without Actions:
 ```powershell
 $env:JAVA_HOME = "path\to\jdk-17"
 .\gradlew.bat assembleRelease
-copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.7-lan.apk
-gh release create v3.1.7-lan `
-  SMS-Forwarder-3.1.7-lan.apk `
+copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.8-lan.apk
+gh release create v3.1.8-lan `
+  SMS-Forwarder-3.1.8-lan.apk `
   update-manifest.json `
-  --title "v3.1.7-lan" `
+  --title "v3.1.8-lan" `
   --notes "- Manual release notes"
 ```
 
