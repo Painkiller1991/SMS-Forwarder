@@ -1,9 +1,56 @@
-# GitHub release checklist (signed release APKs)
+# Release flow (develop → main → GitHub Actions)
 
-The app checks `GET /repos/Painkiller1991/SMS-Forwarder/releases/latest` on cold start.
-Ship **release-signed** APKs (not debug). Debug and release signatures differ — users on an old debug install must **uninstall once**, then install the release APK.
+Day-to-day work lives on **`develop`**. Shipping a build means bumping the version on develop, merging to **`main`**, and letting CI publish a signed GitHub Release.
 
-## One-time: create your release keystore
+```text
+develop commits → bump versionCode/versionName + update-manifest.json → merge to main → Actions release
+```
+
+## Branches
+
+| Branch | Role |
+|--------|------|
+| `develop` | Feature work and commits |
+| `main` | Release line only; every push runs [`.github/workflows/release.yml`](../.github/workflows/release.yml) |
+
+### Ship a release
+
+1. On `develop`, bump `versionCode` / `versionName` in `app/build.gradle.kts`.
+2. Sync `update-manifest.json` so `versionName`, `versionCode`, and `apkAsset` (`SMS-Forwarder-{versionName}.apk`) match. Set `forceUpdate` as needed.
+3. Merge `develop` → `main` and push `main`.
+4. GitHub Actions builds the signed release APK and creates `v{versionName}` with the APK + `update-manifest.json`.
+
+CI **fails** if the manifest does not match Gradle, or if tag `v{versionName}` already exists — bump before re-merging.
+
+### `forceUpdate`
+
+- `forceUpdate: false` — user can Later / Skip; features keep working.
+- `forceUpdate: true` — clients on **3.1.6+** must install; app turns off sender/receive and blocks the UI until updated.
+
+`changelog` in the manifest is shown in the update dialog. Repo must stay **public** so devices can read `releases/latest`.
+
+## One-time: GitHub Actions secrets
+
+Repo → **Settings → Secrets and variables → Actions**. Add before the first CI release:
+
+| Secret | Value |
+|--------|--------|
+| `RELEASE_KEYSTORE_BASE64` | Base64 of `keystore/sms-forwarder-release.jks` |
+| `RELEASE_STORE_PASSWORD` | Keystore store password |
+| `RELEASE_KEY_ALIAS` | Usually `smsforwarder` |
+| `RELEASE_KEY_PASSWORD` | Key password |
+
+`GITHUB_TOKEN` is provided by Actions; the workflow uses `permissions: contents: write` for releases.
+
+Encode the keystore (PowerShell):
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("keystore\sms-forwarder-release.jks")) | Set-Clipboard
+```
+
+Then paste into the `RELEASE_KEYSTORE_BASE64` secret.
+
+## One-time: create your release keystore (local)
 
 ```powershell
 .\scripts\create-release-keystore.ps1
@@ -24,46 +71,22 @@ keytool -genkeypair -v `
 Copy [`keystore.properties.example`](../keystore.properties.example) → `keystore.properties` and fill passwords.  
 **Never commit** `keystore/`, `*.jks`, or `keystore.properties`. Back them up offline — losing the key blocks in-place updates.
 
-## Each release
+Local `assembleRelease` still uses `keystore.properties`. CI uses env vars (`SMS_STORE_*`) when that file is absent.
 
-1. Bump `versionCode` / `versionName` in `app/build.gradle.kts`.
-2. Build:
+## Manual release (optional fallback)
+
+If you need to publish without Actions:
 
 ```powershell
 $env:JAVA_HOME = "path\to\jdk-17"
 .\gradlew.bat assembleRelease
 copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.7-lan.apk
-```
-
-3. Write `update-manifest.json` (exact asset name):
-
-```json
-{
-  "versionCode": 32,
-  "versionName": "3.1.7-lan",
-  "apkAsset": "SMS-Forwarder-3.1.7-lan.apk",
-  "forceUpdate": false,
-  "changelog": [
-    "Update dialog buttons fully visible",
-    "Fix receiver EADDRINUSE bind"
-  ]
-}
-```
-
-- `forceUpdate: false` — user can Later / Skip; features keep working.
-- `forceUpdate: true` — clients on **3.1.6+** must install; app turns off sender/receive and blocks the UI until updated.
-
-4. Publish:
-
-```powershell
 gh release create v3.1.7-lan `
   SMS-Forwarder-3.1.7-lan.apk `
   update-manifest.json `
   --title "v3.1.7-lan" `
-  --notes "- Update dialog layout`n- Receiver EADDRINUSE fix"
+  --notes "- Manual release notes"
 ```
-
-`changelog` in the manifest is shown in the update dialog. Repo must stay **public**.
 
 ## Play Protect
 
