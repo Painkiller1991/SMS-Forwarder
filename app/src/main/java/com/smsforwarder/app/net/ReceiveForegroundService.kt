@@ -33,7 +33,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.net.BindException
 
 /**
  * Stable LAN listener via one quiet foreground notification.
@@ -42,8 +44,6 @@ import kotlinx.coroutines.launch
  */
 class ReceiveForegroundService : Service() {
     private var server: ReceiveServer? = null
-    /** Hostname the current [server] is bound to (LAN IPv4 or 0.0.0.0). */
-    private var boundHost: String? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastStatus: String = ""
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -179,7 +179,8 @@ class ReceiveForegroundService : Service() {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                scope.launch { rebindIfNeeded(updateUi = true) }
+                // Only start if socket is down — do not rebind on every Wi‑Fi callback
+                scope.launch { ensureListening(updateUi = true) }
             }
 
             override fun onLost(network: Network) {
@@ -196,94 +197,96 @@ class ReceiveForegroundService : Service() {
         runCatching { cm.registerNetworkCallback(req, cb) }
     }
 
-    private fun desiredBindHost(): String = WifiIp.localIpv4(this) ?: "0.0.0.0"
-
     private fun stopLanServerQuiet() {
-        runCatching { server?.stop() }
+        val s = server
         server = null
-        boundHost = null
+        if (s != null) {
+            runCatching { s.closeAllConnections() }
+            runCatching { s.stop() }
+        }
     }
 
-    private fun startLanServer(updateUi: Boolean) {
+    private fun isAddrInUse(e: Throwable): Boolean {
+        val msg = e.message.orEmpty()
+        return e is BindException ||
+            msg.contains("EADDRINUSE", ignoreCase = true) ||
+            msg.contains("Address already in use", ignoreCase = true)
+    }
+
+    private suspend fun startLanServer(updateUi: Boolean) {
         val app = application as SmsForwarderApp
         val prefs = app.prefs
         if (!ListenFlag.read(this)) return
-        try {
-            val host = desiredBindHost()
-            if (server != null && boundHost == host) {
+        if (server != null) {
+            if (updateUi) handler.post { updateListeningNotification(force = true) }
+            return
+        }
+        SecretStore.write(this, prefs.sharedSecret)
+        var lastError: Exception? = null
+        for (attempt in 0 until BIND_ATTEMPTS) {
+            try {
+                withBriefWake {
+                    val receiveServer = ReceiveServer(
+                        port = ReceiveServer.DEFAULT_PORT,
+                        sharedSecretProvider = {
+                            SecretStore.read(this) ?: prefs.sharedSecret
+                        },
+                        onSms = { sender, body, timestamp ->
+                            handleIncoming(app, sender, body, timestamp)
+                        }
+                    )
+                    receiveServer.startListening()
+                    server = receiveServer
+                }
+                // #region agent log
+                AgentDebugLog.log(
+                    hypothesisId = "LAN",
+                    location = "ReceiveForegroundService.startLanServer",
+                    message = "LAN server listening (calm mode)",
+                    data = mapOf(
+                        "bind" to ReceiveServer.BIND_HOST,
+                        "wifiIp" to (WifiIp.localIpv4(this) ?: "?"),
+                        "port" to (server?.listeningPort ?: -1),
+                        "attempt" to (attempt + 1)
+                    ),
+                    runId = "lan-calm"
+                )
+                // #endregion
                 if (updateUi) handler.post { updateListeningNotification(force = true) }
                 return
+            } catch (e: Exception) {
+                lastError = e
+                stopLanServerQuiet()
+                if (isAddrInUse(e) && attempt < BIND_ATTEMPTS - 1) {
+                    Log.w(TAG, "Bind EADDRINUSE — retry ${attempt + 1}", e)
+                    delay(BIND_RETRY_MS)
+                } else if (!isAddrInUse(e)) {
+                    break
+                }
             }
-            if (server != null) stopLanServerQuiet()
-            withBriefWake {
-                SecretStore.write(this, prefs.sharedSecret)
-                val receiveServer = ReceiveServer(
-                    hostname = host,
-                    port = ReceiveServer.DEFAULT_PORT,
-                    sharedSecretProvider = {
-                        SecretStore.read(this) ?: prefs.sharedSecret
-                    },
-                    onSms = { sender, body, timestamp ->
-                        handleIncoming(app, sender, body, timestamp)
-                    }
-                )
-                receiveServer.startListening()
-                server = receiveServer
-                boundHost = host
-            }
-            // #region agent log
-            AgentDebugLog.log(
-                hypothesisId = "LAN",
-                location = "ReceiveForegroundService.startLanServer",
-                message = "LAN server listening (calm mode)",
-                data = mapOf(
-                    "ip" to (boundHost ?: "?"),
-                    "port" to (server?.listeningPort ?: -1)
-                ),
-                runId = "lan-calm"
-            )
-            // #endregion
-            if (updateUi) handler.post { updateListeningNotification(force = true) }
-        } catch (e: Exception) {
-            Log.e(TAG, "LAN server start failed", e)
-            stopLanServerQuiet()
-            handler.post {
-                lastStatus = "FAILED: ${e.message}"
-                startForegroundNow(buildListeningNotification(lastStatus))
-            }
+        }
+        Log.e(TAG, "LAN server start failed", lastError)
+        handler.post {
+            lastStatus = "FAILED: ${lastError?.message}"
+            startForegroundNow(buildListeningNotification(lastStatus))
         }
     }
 
-    /** Restart listener when Wi‑Fi IP changes (e.g. VPN on/off). */
-    private fun rebindIfNeeded(updateUi: Boolean) {
+    private suspend fun ensureListening(updateUi: Boolean) {
         if (!ListenFlag.read(this)) return
-        val host = desiredBindHost()
-        if (server != null && boundHost == host) {
+        if (server != null) {
             if (updateUi) handler.post { updateListeningNotification(force = false) }
             return
         }
-        stopLanServerQuiet()
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "RECV_CLOSED",
+            location = "ReceiveForegroundService.ensureListening",
+            message = "Socket missing — start once",
+            runId = "lan-calm"
+        )
+        // #endregion
         startLanServer(updateUi = true)
-    }
-
-    private fun ensureListening(updateUi: Boolean) {
-        if (!ListenFlag.read(this)) return
-        val host = desiredBindHost()
-        if (server == null || boundHost != host) {
-            // #region agent log
-            AgentDebugLog.log(
-                hypothesisId = "RECV_CLOSED",
-                location = "ReceiveForegroundService.ensureListening",
-                message = "Socket missing or IP changed — rebind",
-                data = mapOf("bound" to boundHost, "desired" to host),
-                runId = "lan-calm"
-            )
-            // #endregion
-            stopLanServerQuiet()
-            startLanServer(updateUi = true)
-        } else if (updateUi) {
-            handler.post { updateListeningNotification(force = false) }
-        }
     }
 
     private fun handleIncoming(
@@ -388,6 +391,8 @@ class ReceiveForegroundService : Service() {
         private const val NOTIFICATION_ID = 42
         /** Soft check every 5 min — only restarts socket if missing. */
         private const val WATCHDOG_MS = 5 * 60 * 1000L
+        private const val BIND_ATTEMPTS = 3
+        private const val BIND_RETRY_MS = 250L
         const val ACTION_STOP = "com.smsforwarder.app.STOP_RECEIVE"
         const val ACTION_ENSURE = "com.smsforwarder.app.ENSURE_RECEIVE"
 

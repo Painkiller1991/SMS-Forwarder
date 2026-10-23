@@ -7,22 +7,19 @@ import fi.iki.elonen.NanoHTTPD
 import java.io.IOException
 
 /**
- * Local-only HTTP listener on Wi‑Fi. Binds to the LAN interface IP when known
- * so VPN does not own the listen path.
+ * Local-only HTTP listener. Binds [BIND_HOST] (all interfaces) so LAN peers can
+ * connect; UI/QR still show the Wi‑Fi IPv4 from [WifiIp].
  */
 class ReceiveServer(
-    hostname: String,
     port: Int,
     private val sharedSecretProvider: () -> String,
     private val onSms: (sender: String, body: String, timestamp: Long) -> Unit
-) : NanoHTTPD(hostname, port) {
-
-    private val bindHost = hostname
+) : NanoHTTPD(BIND_HOST, port) {
 
     @Throws(IOException::class)
     fun startListening() {
         start(SOCKET_READ_TIMEOUT, false)
-        Log.i(TAG, "LAN receive server on $bindHost:$listeningPort")
+        Log.i(TAG, "LAN receive server on $BIND_HOST:$listeningPort")
     }
 
     override fun serve(session: IHTTPSession): Response {
@@ -108,5 +105,6 @@ class ReceiveServer(
     companion object {
         private const val TAG = "ReceiveServer"
         const val DEFAULT_PORT = 18765
+        const val BIND_HOST = "0.0.0.0"
     }
 }

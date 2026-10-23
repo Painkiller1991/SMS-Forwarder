@@ -103,14 +103,19 @@ fun UpdateAvailableDialog(
                 }
             }
         },
+        // Stack all actions in confirmButton — dismissButton clips a tall Column
         confirmButton = {
-            Button(onClick = onDownload) {
-                Text("Download and install")
-            }
-        },
-        dismissButton = {
-            if (!forced) {
-                Column(horizontalAlignment = Alignment.End) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.End
+            ) {
+                Button(
+                    onClick = onDownload,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Download and install")
+                }
+                if (!forced) {
                     TextButton(onClick = onLater) {
                         Text("Later")
                     }
@@ -119,7 +124,8 @@ fun UpdateAvailableDialog(
                     }
                 }
             }
-        }
+        },
+        dismissButton = {}
     )
 }
 

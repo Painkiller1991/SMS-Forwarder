@@ -32,20 +32,20 @@ Copy [`keystore.properties.example`](../keystore.properties.example) → `keysto
 ```powershell
 $env:JAVA_HOME = "path\to\jdk-17"
 .\gradlew.bat assembleRelease
-copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.6-lan.apk
+copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.7-lan.apk
 ```
 
 3. Write `update-manifest.json` (exact asset name):
 
 ```json
 {
-  "versionCode": 31,
-  "versionName": "3.1.6-lan",
-  "apkAsset": "SMS-Forwarder-3.1.6-lan.apk",
+  "versionCode": 32,
+  "versionName": "3.1.7-lan",
+  "apkAsset": "SMS-Forwarder-3.1.7-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Optional vs forced updates",
-    "Quieter OTP notifications for autofill"
+    "Update dialog buttons fully visible",
+    "Fix receiver EADDRINUSE bind"
   ]
 }
 ```
@@ -56,11 +56,11 @@ copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.6-lan.apk
 4. Publish:
 
 ```powershell
-gh release create v3.1.6-lan `
-  SMS-Forwarder-3.1.6-lan.apk `
+gh release create v3.1.7-lan `
+  SMS-Forwarder-3.1.7-lan.apk `
   update-manifest.json `
-  --title "v3.1.6-lan" `
-  --notes "- Forced update support`n- Quieter OTP for autofill"
+  --title "v3.1.7-lan" `
+  --notes "- Update dialog layout`n- Receiver EADDRINUSE fix"
 ```
 
 `changelog` in the manifest is shown in the update dialog. Repo must stay **public**.
