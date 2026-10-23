@@ -8,6 +8,7 @@ import com.smsforwarder.app.data.AppRole
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.SenderKeepAliveService
+import com.smsforwarder.app.update.UpdateLock
 
 /**
  * One-shot restart after the UI task is swiped away.
@@ -17,6 +18,7 @@ class ServiceWatchdogReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val app = context.applicationContext as? SmsForwarderApp ?: return
         val prefs = app.prefs
+        if (UpdateLock.isActive(prefs)) return
         when (prefs.role) {
             AppRole.RECEIVER -> {
                 if (!prefs.receiveEnabled) return

@@ -32,31 +32,35 @@ Copy [`keystore.properties.example`](../keystore.properties.example) → `keysto
 ```powershell
 $env:JAVA_HOME = "path\to\jdk-17"
 .\gradlew.bat assembleRelease
-copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.5-lan.apk
+copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.6-lan.apk
 ```
 
 3. Write `update-manifest.json` (exact asset name):
 
 ```json
 {
-  "versionCode": 30,
-  "versionName": "3.1.5-lan",
-  "apkAsset": "SMS-Forwarder-3.1.5-lan.apk",
+  "versionCode": 31,
+  "versionName": "3.1.6-lan",
+  "apkAsset": "SMS-Forwarder-3.1.6-lan.apk",
+  "forceUpdate": false,
   "changelog": [
-    "Update dialog: Later or Skip this version",
-    "Side menu Update item; OTP auto-copy on receive"
+    "Optional vs forced updates",
+    "Quieter OTP notifications for autofill"
   ]
 }
 ```
 
+- `forceUpdate: false` — user can Later / Skip; features keep working.
+- `forceUpdate: true` — clients on **3.1.6+** must install; app turns off sender/receive and blocks the UI until updated.
+
 4. Publish:
 
 ```powershell
-gh release create v3.1.5-lan `
-  SMS-Forwarder-3.1.5-lan.apk `
+gh release create v3.1.6-lan `
+  SMS-Forwarder-3.1.6-lan.apk `
   update-manifest.json `
-  --title "v3.1.5-lan" `
-  --notes "- Later / Skip update UX`n- Live OTP auto-copy"
+  --title "v3.1.6-lan" `
+  --notes "- Forced update support`n- Quieter OTP for autofill"
 ```
 
 `changelog` in the manifest is shown in the update dialog. Repo must stay **public**.

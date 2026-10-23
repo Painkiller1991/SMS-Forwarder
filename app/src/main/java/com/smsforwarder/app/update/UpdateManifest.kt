@@ -7,7 +7,9 @@ data class UpdateManifest(
     val versionName: String,
     val apkAsset: String,
     /** Optional bullet lines shown in the update dialog Changelog section. */
-    val changelog: List<String> = emptyList()
+    val changelog: List<String> = emptyList(),
+    /** When true, clients must install — no Later/Skip; features shut down. */
+    val forceUpdate: Boolean = false
 ) {
     companion object {
         const val ASSET_NAME = "update-manifest.json"
@@ -27,7 +29,8 @@ data class UpdateManifest(
                 versionCode = o.getInt("versionCode"),
                 versionName = o.getString("versionName"),
                 apkAsset = o.getString("apkAsset"),
-                changelog = notes
+                changelog = notes,
+                forceUpdate = o.optBoolean("forceUpdate", false)
             )
         }
     }
@@ -38,5 +41,6 @@ data class AvailableUpdate(
     val versionName: String,
     val changelog: List<String>,
     val apkDownloadUrl: String,
-    val apkBytes: Long?
+    val apkBytes: Long?,
+    val forceUpdate: Boolean = false
 )

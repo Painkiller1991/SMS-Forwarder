@@ -16,6 +16,7 @@ import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.net.SenderKeepAliveService
 import com.smsforwarder.app.net.WifiIp
 import com.smsforwarder.app.pairing.PairingInfo
+import com.smsforwarder.app.update.UpdateLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,21 +53,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
+        UpdateLock.clearIfSatisfied(prefs)
+        if (UpdateLock.isActive(prefs)) {
+            UpdateLock.engage(application, prefs, prefs.updateLockedVersionCode)
+        }
         refreshFromPrefs()
-        if (prefs.role == AppRole.RECEIVER && prefs.receiveEnabled) {
-            ReceiveForegroundService.start(application)
-        }
-        if (prefs.role == AppRole.SENDER && prefs.senderEnabled && prefs.endpointConfigured) {
-            startSenderKeepAlive()
-        }
-        if (prefs.role == AppRole.SENDER) {
-            verifySenderPairing()
+        if (!UpdateLock.isActive(prefs)) {
+            if (prefs.role == AppRole.RECEIVER && prefs.receiveEnabled) {
+                ReceiveForegroundService.start(application)
+            }
+            if (prefs.role == AppRole.SENDER && prefs.senderEnabled && prefs.endpointConfigured) {
+                startSenderKeepAlive()
+            }
+            if (prefs.role == AppRole.SENDER) {
+                verifySenderPairing()
+            }
         }
         viewModelScope.launch {
             app.database.messageDao().observeAll().collect { list ->
                 _state.update { it.copy(messages = list) }
             }
         }
+    }
+
+    /** Refresh UI after a forced update shut down LAN features. */
+    fun onForceUpdateLocked() {
+        refreshFromPrefs()
     }
 
     fun refreshFromPrefs() {
@@ -182,6 +194,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSenderEnabled(enabled: Boolean) {
+        if (enabled && UpdateLock.isActive(prefs)) {
+            refreshFromPrefs()
+            return
+        }
         prefs.senderEnabled = enabled
         if (enabled && prefs.endpointConfigured) {
             startSenderKeepAlive()
@@ -193,6 +209,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setReceiveEnabled(context: Context, enabled: Boolean) {
+        if (enabled && UpdateLock.isActive(prefs)) {
+            refreshFromPrefs()
+            return
+        }
         prefs.receiveEnabled = enabled
         // #region agent log
         AgentDebugLog.log(

@@ -28,6 +28,7 @@ import androidx.core.content.ContextCompat
 import com.smsforwarder.app.notify.InboxNotifier
 import com.smsforwarder.app.otp.OtpParser
 import com.smsforwarder.app.ui.MainActivity
+import com.smsforwarder.app.update.UpdateLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -60,6 +61,10 @@ class ReceiveForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // File flag is visible across UI + :recv (SharedPreferences is not)
         val listenOn = ListenFlag.read(this)
+        if (UpdateLock.isActive(this)) {
+            stopSelfSafely()
+            return START_NOT_STICKY
+        }
         // #region agent log
         AgentDebugLog.log(
             hypothesisId = "H_ON",
@@ -290,9 +295,10 @@ class ReceiveForegroundService : Service() {
         withBriefWake {
             val otp = OtpParser.extract(body)
             if (otp != null) {
+                // Store before notify/copy so Autofill's short wait can see the code
                 app.otpStore.put(otp, sender)
-                // Auto-copy so paste/clipboard UI works while already focused in another app
-                InboxNotifier.copyOtp(app, otp)
+                // Delayed sensitive clipboard — avoid stealing focus from OTP field
+                InboxNotifier.copyOtpDelayed(app, otp)
             }
             scope.launch {
                 app.database.messageDao().insert(

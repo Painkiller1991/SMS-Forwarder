@@ -5,6 +5,8 @@
     <string name="receive_channel_desc">Keeps the local Wi‑Fi listener running while Receive mode is on</string>
     <string name="inbox_channel_name">Forwarded SMS</string>
     <string name="inbox_channel_desc">Shows SMS forwarded from the sender device</string>
+    <string name="inbox_otp_channel_name">OTP (quiet)</string>
+    <string name="inbox_otp_channel_desc">OTP alerts without aggressive heads-up so autofill can keep focus</string>
     <string name="autofill_service_description">Suggests OTP codes from SMS forwarded over Wi‑Fi</string>
     <string name="copy_otp">Copy OTP</string>
     <string name="notification_title_sms">SMS from %1$s</string>

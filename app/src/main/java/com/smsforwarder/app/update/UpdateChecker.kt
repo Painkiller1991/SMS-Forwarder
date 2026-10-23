@@ -48,7 +48,10 @@ object UpdateChecker {
             apkNameFromManifest = manifest.apkAsset
 
             if (manifest.versionCode <= BuildConfig.VERSION_CODE) return@runCatching null
-            if (manifest.versionCode == skippedVersionCode) return@runCatching null
+            // Forced updates ignore "Skip this version"
+            if (!manifest.forceUpdate && manifest.versionCode == skippedVersionCode) {
+                return@runCatching null
+            }
 
             for (i in 0 until assets.length()) {
                 val a = assets.getJSONObject(i)
@@ -70,7 +73,8 @@ object UpdateChecker {
                 versionName = manifest.versionName,
                 changelog = changelog,
                 apkDownloadUrl = url,
-                apkBytes = apkBytes
+                apkBytes = apkBytes,
+                forceUpdate = manifest.forceUpdate
             )
         }.getOrNull()
     }

@@ -32,10 +32,14 @@ fun UpdateAvailableDialog(
     onLater: () -> Unit,
     onSkip: () -> Unit
 ) {
+    val forced = update.forceUpdate
     AlertDialog(
-        onDismissRequest = onLater,
+        onDismissRequest = { if (!forced) onLater() },
         title = {
-            Text("Update available", fontWeight = FontWeight.Bold)
+            Text(
+                if (forced) "Update required" else "Update available",
+                fontWeight = FontWeight.Bold
+            )
         },
         text = {
             Column(
@@ -45,7 +49,11 @@ fun UpdateAvailableDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    "New version ${update.versionName} is ready.",
+                    if (forced) {
+                        "Version ${update.versionName} is required. The app cannot continue until you install it."
+                    } else {
+                        "New version ${update.versionName} is ready."
+                    },
                     style = MaterialTheme.typography.bodyLarge
                 )
                 Spacer(Modifier.height(4.dp))
@@ -101,12 +109,14 @@ fun UpdateAvailableDialog(
             }
         },
         dismissButton = {
-            Column(horizontalAlignment = Alignment.End) {
-                TextButton(onClick = onLater) {
-                    Text("Later")
-                }
-                TextButton(onClick = onSkip) {
-                    Text("Skip this version")
+            if (!forced) {
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(onClick = onLater) {
+                        Text("Later")
+                    }
+                    TextButton(onClick = onSkip) {
+                        Text("Skip this version")
+                    }
                 }
             }
         }
@@ -116,7 +126,8 @@ fun UpdateAvailableDialog(
 @Composable
 fun UpdateProgressDialog(
     progress: Float,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    allowCancel: Boolean = true
 ) {
     AlertDialog(
         onDismissRequest = {},
@@ -147,8 +158,10 @@ fun UpdateProgressDialog(
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onCancel) {
-                Text("Cancel")
+            if (allowCancel) {
+                TextButton(onClick = onCancel) {
+                    Text("Cancel")
+                }
             }
         }
     )

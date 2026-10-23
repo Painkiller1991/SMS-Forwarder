@@ -9,6 +9,7 @@ import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.data.AppRole
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.net.SmsForwardService
+import com.smsforwarder.app.update.UpdateLock
 
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -25,6 +26,7 @@ class SmsReceiver : BroadcastReceiver() {
 
         val app = context.applicationContext as? SmsForwarderApp ?: return
         val prefs = app.prefs
+        if (UpdateLock.isActive(prefs)) return
         // #region agent log
         AgentDebugLog.log(
             hypothesisId = "B",

@@ -50,6 +50,7 @@ import com.smsforwarder.app.ui.screens.ReceiverScreen
 import com.smsforwarder.app.ui.screens.RolePickerScreen
 import com.smsforwarder.app.ui.screens.SenderScreen
 import com.smsforwarder.app.ui.theme.SmsForwarderTheme
+import com.smsforwarder.app.update.UpdateLock
 
 class MainActivity : ComponentActivity() {
     private var onScanResult: ((String?) -> Unit)? = null
@@ -88,16 +89,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         val prefs = (application as? SmsForwarderApp)?.prefs
-        when (prefs?.role) {
-            AppRole.RECEIVER -> if (prefs.receiveEnabled) {
-                ServiceWatchdog.scheduleSoon(applicationContext)
-                runCatching { ReceiveForegroundService.ensure(applicationContext) }
+        if (prefs != null && !UpdateLock.isActive(prefs)) {
+            when (prefs.role) {
+                AppRole.RECEIVER -> if (prefs.receiveEnabled) {
+                    ServiceWatchdog.scheduleSoon(applicationContext)
+                    runCatching { ReceiveForegroundService.ensure(applicationContext) }
+                }
+                AppRole.SENDER -> if (prefs.senderEnabled && prefs.endpointConfigured) {
+                    ServiceWatchdog.scheduleSoon(applicationContext)
+                    runCatching { SenderKeepAliveService.ensure(applicationContext) }
+                }
+                else -> Unit
             }
-            AppRole.SENDER -> if (prefs.senderEnabled && prefs.endpointConfigured) {
-                ServiceWatchdog.scheduleSoon(applicationContext)
-                runCatching { SenderKeepAliveService.ensure(applicationContext) }
-            }
-            else -> Unit
         }
         super.onDestroy()
     }
@@ -255,7 +258,11 @@ private fun AppRoot(
     val updateOffer = rememberUpdateOfferController()
     CompositionLocalProvider(LocalUpdateOffer provides updateOffer) {
     Box(modifier = Modifier.fillMaxSize()) {
-    AppUpdateHost(activity = activity, offer = updateOffer)
+    AppUpdateHost(
+        activity = activity,
+        offer = updateOffer,
+        onForceLockApplied = { vm.onForceUpdateLocked() }
+    )
     when (state.role) {
         AppRole.NONE -> RolePickerScreen(
             themeMode = state.themeMode,

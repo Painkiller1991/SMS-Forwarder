@@ -9,6 +9,7 @@ import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.net.KeepAliveScheduler
 import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.SenderKeepAliveService
+import com.smsforwarder.app.update.UpdateLock
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -19,6 +20,8 @@ class BootReceiver : BroadcastReceiver() {
         }
         val app = context.applicationContext as? SmsForwarderApp ?: return
         val prefs = app.prefs
+        UpdateLock.clearIfSatisfied(prefs)
+        if (UpdateLock.isActive(prefs)) return
         // #region agent log
         AgentDebugLog.log(
             hypothesisId = "KEEPALIVE",

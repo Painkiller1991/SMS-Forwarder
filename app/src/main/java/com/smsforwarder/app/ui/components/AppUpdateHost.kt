@@ -4,6 +4,12 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -12,18 +18,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.update.ApkInstaller
 import com.smsforwarder.app.update.AvailableUpdate
 import com.smsforwarder.app.update.UpdateChecker
 import com.smsforwarder.app.update.UpdateDownloader
+import com.smsforwarder.app.update.UpdateLock
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @Composable
 fun AppUpdateHost(
     activity: ComponentActivity,
-    offer: UpdateOfferController
+    offer: UpdateOfferController,
+    onForceLockApplied: () -> Unit = {}
 ) {
     val prefs = remember {
         (activity.application as SmsForwarderApp).prefs
@@ -56,11 +65,32 @@ fun AppUpdateHost(
     }
 
     LaunchedEffect(Unit) {
+        UpdateLock.clearIfSatisfied(prefs)
         val update = UpdateChecker.check(prefs.skippedUpdateVersionCode)
-        if (update != null) offer.setOffer(update)
+        if (update != null) {
+            if (update.forceUpdate) {
+                UpdateLock.engage(activity, prefs, update.versionCode)
+                onForceLockApplied()
+            }
+            offer.setOffer(update)
+        }
     }
 
     val update = offer.available
+    val forced = update?.forceUpdate == true
+
+    if (forced) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.72f))
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() }
+                ) { /* block underlying UI */ }
+        )
+    }
+
     if (update != null && offer.showPrompt && !downloading) {
         UpdateAvailableDialog(
             update = update,
@@ -93,7 +123,9 @@ fun AppUpdateHost(
     if (downloading) {
         UpdateProgressDialog(
             progress = progress,
+            allowCancel = !forced,
             onCancel = {
+                if (forced) return@UpdateProgressDialog
                 downloadJob?.cancel()
                 downloadJob = null
                 downloading = false

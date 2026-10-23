@@ -15,20 +15,24 @@ class UpdateOfferController {
     var showPrompt by mutableStateOf(false)
         private set
 
+    val isForced: Boolean get() = available?.forceUpdate == true
+
     fun setOffer(update: AvailableUpdate) {
         available = update
         showPrompt = true
     }
 
-    /** Session dismiss — drawer still shows the update. */
+    /** Session dismiss — drawer still shows the update. No-op when forced. */
     fun later() {
+        if (available?.forceUpdate == true) return
         showPrompt = false
     }
 
-    /** Permanent skip for this versionCode until a newer release. */
+    /** Permanent skip for this versionCode until a newer release. No-op when forced. */
     fun skipThisVersion(prefs: Prefs) {
-        val code = available?.versionCode ?: return
-        prefs.skippedUpdateVersionCode = code
+        val update = available ?: return
+        if (update.forceUpdate) return
+        prefs.skippedUpdateVersionCode = update.versionCode
         available = null
         showPrompt = false
     }

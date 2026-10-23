@@ -124,6 +124,16 @@ class Prefs(context: Context) {
             sp.edit().putInt(KEY_SKIPPED_UPDATE, value).commit()
         }
 
+    /**
+     * Forced-update target versionCode. While installed build is below this,
+     * LAN features stay off. 0 = not locked.
+     */
+    var updateLockedVersionCode: Int
+        get() = sp.getInt(KEY_UPDATE_LOCKED, 0)
+        set(value) {
+            sp.edit().putInt(KEY_UPDATE_LOCKED, value).commit()
+        }
+
     companion object {
         const val PREFS_NAME = "sms_forwarder"
         private const val KEY_ROLE = "role"
@@ -135,5 +145,6 @@ class Prefs(context: Context) {
         private const val KEY_PORT = "receiver_port"
         private const val KEY_THEME = "theme_mode"
         private const val KEY_SKIPPED_UPDATE = "skipped_update_version_code"
+        private const val KEY_UPDATE_LOCKED = "update_locked_version_code"
     }
 }

@@ -98,6 +98,27 @@ class SmsForwarderApp : Application() {
             )
         }
         manager.createNotificationChannel(alert)
+
+        // DEFAULT importance — shade + sound, less likely to steal OTP field focus
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_INBOX_OTP,
+                getString(R.string.inbox_otp_channel_name),
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = getString(R.string.inbox_otp_channel_desc)
+                enableVibration(false)
+                setShowBadge(true)
+                setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+            }
+        )
+
         // Remove obsolete low/broken channel if present from older builds
         runCatching { manager.deleteNotificationChannel("forwarded_sms") }
     }
@@ -106,6 +127,8 @@ class SmsForwarderApp : Application() {
         const val CHANNEL_RECEIVE = "receive_server"
         /** Heads-up SMS alerts (not the silent FGS channel). */
         const val CHANNEL_INBOX = "forwarded_sms_alert_v2"
+        /** Quieter OTP alerts to preserve autofill focus in other apps. */
+        const val CHANNEL_INBOX_OTP = "forwarded_sms_otp_quiet_v1"
 
         lateinit var instance: SmsForwarderApp
             private set
