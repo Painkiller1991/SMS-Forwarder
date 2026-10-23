@@ -2,6 +2,8 @@ package com.smsforwarder.app.autofill
 
 import android.app.assist.AssistStructure
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import android.service.autofill.AutofillService
 import android.service.autofill.Dataset
 import android.service.autofill.FillCallback
@@ -13,20 +15,16 @@ import android.view.autofill.AutofillId
 import android.view.autofill.AutofillValue
 import android.widget.RemoteViews
 import com.smsforwarder.app.SmsForwarderApp
+import com.smsforwarder.app.otp.StoredOtp
 
 class SmsOtpAutofillService : AutofillService() {
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     override fun onFillRequest(
         request: FillRequest,
         cancellationSignal: CancellationSignal,
         callback: FillCallback
     ) {
-        // Reads file-backed store so OTP written in :recv is visible here
-        val otp = (application as SmsForwarderApp).otpStore.getValid()
-        if (otp == null) {
-            callback.onSuccess(null)
-            return
-        }
-
         val structure = request.fillContexts.lastOrNull()?.structure
         if (structure == null) {
             callback.onSuccess(null)
@@ -40,6 +38,44 @@ class SmsOtpAutofillService : AutofillService() {
             return
         }
 
+        val store = (application as SmsForwarderApp).otpStore
+        val immediate = store.getValid()
+        if (immediate != null) {
+            deliver(ids, immediate, callback)
+            return
+        }
+
+        // User often focuses the OTP field before the SMS arrives — wait briefly.
+        val deadline = System.currentTimeMillis() + WAIT_MS
+        val poll = object : Runnable {
+            override fun run() {
+                if (cancellationSignal.isCanceled) {
+                    runCatching { callback.onSuccess(null) }
+                    return
+                }
+                val otp = store.getValid()
+                if (otp != null) {
+                    deliver(ids, otp, callback)
+                    return
+                }
+                if (System.currentTimeMillis() >= deadline) {
+                    callback.onSuccess(null)
+                    return
+                }
+                mainHandler.postDelayed(this, POLL_MS)
+            }
+        }
+        cancellationSignal.setOnCancelListener {
+            mainHandler.removeCallbacks(poll)
+        }
+        mainHandler.postDelayed(poll, POLL_MS)
+    }
+
+    private fun deliver(
+        ids: List<AutofillId>,
+        otp: StoredOtp,
+        callback: FillCallback
+    ) {
         val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
             setTextViewText(android.R.id.text1, "OTP ${otp.code} (from ${otp.from})")
         }
@@ -94,5 +130,10 @@ class SmsOtpAutofillService : AutofillService() {
         // Many banking screens use a short numeric field without clear hints.
         val maxLength = node.maxTextLength
         return maxLength in 4..8
+    }
+
+    companion object {
+        private const val WAIT_MS = 4_000L
+        private const val POLL_MS = 200L
     }
 }

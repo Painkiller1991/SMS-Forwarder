@@ -32,19 +32,19 @@ Copy [`keystore.properties.example`](../keystore.properties.example) → `keysto
 ```powershell
 $env:JAVA_HOME = "path\to\jdk-17"
 .\gradlew.bat assembleRelease
-copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.4-lan.apk
+copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.5-lan.apk
 ```
 
 3. Write `update-manifest.json` (exact asset name):
 
 ```json
 {
-  "versionCode": 29,
-  "versionName": "3.1.4-lan",
-  "apkAsset": "SMS-Forwarder-3.1.4-lan.apk",
+  "versionCode": 30,
+  "versionName": "3.1.5-lan",
+  "apkAsset": "SMS-Forwarder-3.1.5-lan.apk",
   "changelog": [
-    "LAN keeps working when a system VPN is on",
-    "Receive listener rebinds when Wi‑Fi IP changes"
+    "Update dialog: Later or Skip this version",
+    "Side menu Update item; OTP auto-copy on receive"
   ]
 }
 ```
@@ -52,11 +52,11 @@ copy app\build\outputs\apk\release\app-release.apk SMS-Forwarder-3.1.4-lan.apk
 4. Publish:
 
 ```powershell
-gh release create v3.1.4-lan `
-  SMS-Forwarder-3.1.4-lan.apk `
+gh release create v3.1.5-lan `
+  SMS-Forwarder-3.1.5-lan.apk `
   update-manifest.json `
-  --title "v3.1.4-lan" `
-  --notes "- LAN under VPN`n- Uninstall old debug build once if install fails"
+  --title "v3.1.5-lan" `
+  --notes "- Later / Skip update UX`n- Live OTP auto-copy"
 ```
 
 `changelog` in the manifest is shown in the update dialog. Repo must stay **public**.

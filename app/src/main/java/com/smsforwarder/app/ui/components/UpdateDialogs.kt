@@ -18,6 +18,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -28,7 +29,8 @@ import com.smsforwarder.app.update.AvailableUpdate
 fun UpdateAvailableDialog(
     update: AvailableUpdate,
     onDownload: () -> Unit,
-    onLater: () -> Unit
+    onLater: () -> Unit,
+    onSkip: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onLater,
@@ -99,8 +101,13 @@ fun UpdateAvailableDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onLater) {
-                Text("Later")
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(onClick = onLater) {
+                    Text("Later")
+                }
+                TextButton(onClick = onSkip) {
+                    Text("Skip this version")
+                }
             }
         }
     )

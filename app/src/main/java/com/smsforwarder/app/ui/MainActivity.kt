@@ -20,6 +20,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -43,6 +44,8 @@ import com.smsforwarder.app.net.SenderKeepAliveService
 import com.smsforwarder.app.net.ServiceWatchdog
 import com.smsforwarder.app.pairing.PairingParser
 import com.smsforwarder.app.ui.components.AppUpdateHost
+import com.smsforwarder.app.ui.components.LocalUpdateOffer
+import com.smsforwarder.app.ui.components.rememberUpdateOfferController
 import com.smsforwarder.app.ui.screens.ReceiverScreen
 import com.smsforwarder.app.ui.screens.RolePickerScreen
 import com.smsforwarder.app.ui.screens.SenderScreen
@@ -249,8 +252,10 @@ private fun AppRoot(
         }
     }
 
+    val updateOffer = rememberUpdateOfferController()
+    CompositionLocalProvider(LocalUpdateOffer provides updateOffer) {
     Box(modifier = Modifier.fillMaxSize()) {
-    AppUpdateHost(activity = activity)
+    AppUpdateHost(activity = activity, offer = updateOffer)
     when (state.role) {
         AppRole.NONE -> RolePickerScreen(
             themeMode = state.themeMode,
@@ -345,4 +350,5 @@ private fun AppRoot(
         }
     }
     } // Box
+    } // CompositionLocalProvider
 }

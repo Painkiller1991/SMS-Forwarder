@@ -21,12 +21,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @Composable
-fun AppUpdateHost(activity: ComponentActivity) {
+fun AppUpdateHost(
+    activity: ComponentActivity,
+    offer: UpdateOfferController
+) {
     val prefs = remember {
         (activity.application as SmsForwarderApp).prefs
     }
     val scope = rememberCoroutineScope()
-    var available by remember { mutableStateOf<AvailableUpdate?>(null) }
     var downloading by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
     var downloadJob by remember { mutableStateOf<Job?>(null) }
@@ -37,8 +39,7 @@ fun AppUpdateHost(activity: ComponentActivity) {
     ) {
         if (pendingInstall && ApkInstaller.canInstallPackages(activity)) {
             pendingInstall = false
-            // User returned from settings — re-trigger download path via available
-            available?.let { update ->
+            offer.available?.let { update ->
                 startDownload(
                     activity = activity,
                     update = update,
@@ -46,7 +47,7 @@ fun AppUpdateHost(activity: ComponentActivity) {
                     setDownloading = { downloading = it },
                     setProgress = { progress = it },
                     setJob = { downloadJob = it },
-                    onDone = { available = null; downloading = false }
+                    onDone = { offer.clearAfterInstall(); downloading = false }
                 )
             }
         } else {
@@ -56,11 +57,11 @@ fun AppUpdateHost(activity: ComponentActivity) {
 
     LaunchedEffect(Unit) {
         val update = UpdateChecker.check(prefs.skippedUpdateVersionCode)
-        if (update != null) available = update
+        if (update != null) offer.setOffer(update)
     }
 
-    val update = available
-    if (update != null && !downloading) {
+    val update = offer.available
+    if (update != null && offer.showPrompt && !downloading) {
         UpdateAvailableDialog(
             update = update,
             onDownload = {
@@ -81,13 +82,11 @@ fun AppUpdateHost(activity: ComponentActivity) {
                     setDownloading = { downloading = it },
                     setProgress = { progress = it },
                     setJob = { downloadJob = it },
-                    onDone = { available = null; downloading = false }
+                    onDone = { offer.clearAfterInstall(); downloading = false }
                 )
             },
-            onLater = {
-                prefs.skippedUpdateVersionCode = update.versionCode
-                available = null
-            }
+            onLater = { offer.later() },
+            onSkip = { offer.skipThisVersion(prefs) }
         )
     }
 

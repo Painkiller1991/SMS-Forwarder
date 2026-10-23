@@ -291,6 +291,8 @@ class ReceiveForegroundService : Service() {
             val otp = OtpParser.extract(body)
             if (otp != null) {
                 app.otpStore.put(otp, sender)
+                // Auto-copy so paste/clipboard UI works while already focused in another app
+                InboxNotifier.copyOtp(app, otp)
             }
             scope.launch {
                 app.database.messageDao().insert(

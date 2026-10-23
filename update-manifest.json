@@ -1,10 +1,11 @@
 {
-  "versionCode": 29,
-  "versionName": "3.1.4-lan",
-  "apkAsset": "SMS-Forwarder-3.1.4-lan.apk",
+  "versionCode": 30,
+  "versionName": "3.1.5-lan",
+  "apkAsset": "SMS-Forwarder-3.1.5-lan.apk",
   "changelog": [
-    "LAN keeps working when a system VPN is on (bind to Wi‑Fi)",
-    "Receive listener rebinds when Wi‑Fi IP changes",
-    "Clearer error when peer is unreachable under VPN"
+    "Update dialog: Later (this session) or Skip this version",
+    "Side menu shows Update when a newer release is available",
+    "Debug menu items hidden in release builds",
+    "OTP auto-copied on receive; autofill waits briefly for live SMS"
   ]
 }

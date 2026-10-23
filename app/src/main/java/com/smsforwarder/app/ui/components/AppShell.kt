@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -37,6 +38,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.smsforwarder.app.BuildConfig
 import com.smsforwarder.app.data.ThemeMode
 import kotlinx.coroutines.launch
 
@@ -53,6 +55,8 @@ fun AppShell(
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val updateOffer = LocalUpdateOffer.current
+    val pendingUpdate = updateOffer?.available
 
     fun closeDrawer() {
         scope.launch { drawerState.close() }
@@ -82,24 +86,37 @@ fun AppShell(
                     Spacer(Modifier.height(16.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(8.dp))
-                    NavigationDrawerItem(
-                        icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
-                        label = { Text("Write debug ping") },
-                        selected = false,
-                        onClick = {
-                            closeDrawer()
-                            onDebugPing()
-                        }
-                    )
-                    NavigationDrawerItem(
-                        icon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
-                        label = { Text("Copy debug log") },
-                        selected = false,
-                        onClick = {
-                            closeDrawer()
-                            onCopyDebugLog()
-                        }
-                    )
+                    if (pendingUpdate != null) {
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Default.SystemUpdate, contentDescription = null) },
+                            label = { Text("Update to ${pendingUpdate.versionName}") },
+                            selected = false,
+                            onClick = {
+                                closeDrawer()
+                                updateOffer?.openFromDrawer()
+                            }
+                        )
+                    }
+                    if (BuildConfig.DEBUG) {
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
+                            label = { Text("Write debug ping") },
+                            selected = false,
+                            onClick = {
+                                closeDrawer()
+                                onDebugPing()
+                            }
+                        )
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                            label = { Text("Copy debug log") },
+                            selected = false,
+                            onClick = {
+                                closeDrawer()
+                                onCopyDebugLog()
+                            }
+                        )
+                    }
                     if (onChangeRole != null) {
                         NavigationDrawerItem(
                             icon = { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null) },
