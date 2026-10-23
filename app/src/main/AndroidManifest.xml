@@ -18,6 +18,7 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <uses-feature
         android:name="android.hardware.telephony"
@@ -95,15 +96,18 @@
             android:stopWithTask="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Own process so swiping the UI away does not kill sender keep-alive -->
         <service
             android:name=".net.SenderKeepAliveService"
             android:exported="false"
+            android:process=":send"
             android:stopWithTask="false"
             android:foregroundServiceType="dataSync" />
 
         <service
             android:name=".net.SmsForwardService"
             android:exported="false"
+            android:process=":send"
             android:foregroundServiceType="dataSync" />
 
         <service
@@ -125,5 +129,15 @@
             android:theme="@style/zxing_CaptureTheme"
             android:windowSoftInputMode="stateAlwaysHidden"
             tools:replace="android:screenOrientation" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

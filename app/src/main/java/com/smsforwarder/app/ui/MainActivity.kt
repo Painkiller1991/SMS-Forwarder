@@ -17,6 +17,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -25,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -36,8 +39,10 @@ import com.smsforwarder.app.data.AppRole
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.ReceiveServer
+import com.smsforwarder.app.net.SenderKeepAliveService
 import com.smsforwarder.app.net.ServiceWatchdog
 import com.smsforwarder.app.pairing.PairingParser
+import com.smsforwarder.app.ui.components.AppUpdateHost
 import com.smsforwarder.app.ui.screens.ReceiverScreen
 import com.smsforwarder.app.ui.screens.RolePickerScreen
 import com.smsforwarder.app.ui.screens.SenderScreen
@@ -80,9 +85,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         val prefs = (application as? SmsForwarderApp)?.prefs
-        if (prefs?.role == AppRole.RECEIVER && prefs.receiveEnabled) {
-            ServiceWatchdog.scheduleSoon(applicationContext)
-            runCatching { ReceiveForegroundService.ensure(applicationContext) }
+        when (prefs?.role) {
+            AppRole.RECEIVER -> if (prefs.receiveEnabled) {
+                ServiceWatchdog.scheduleSoon(applicationContext)
+                runCatching { ReceiveForegroundService.ensure(applicationContext) }
+            }
+            AppRole.SENDER -> if (prefs.senderEnabled && prefs.endpointConfigured) {
+                ServiceWatchdog.scheduleSoon(applicationContext)
+                runCatching { SenderKeepAliveService.ensure(applicationContext) }
+            }
+            else -> Unit
         }
         super.onDestroy()
     }
@@ -237,6 +249,8 @@ private fun AppRoot(
         }
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
+    AppUpdateHost(activity = activity)
     when (state.role) {
         AppRole.NONE -> RolePickerScreen(
             themeMode = state.themeMode,
@@ -330,4 +344,5 @@ private fun AppRoot(
             )
         }
     }
+    } // Box
 }

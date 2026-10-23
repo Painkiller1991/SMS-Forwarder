@@ -33,12 +33,12 @@ class SmsReceiver : BroadcastReceiver() {
             data = mapOf(
                 "role" to prefs.role.name,
                 "senderEnabled" to prefs.senderEnabled,
-                "paired" to prefs.paired
+                "endpointConfigured" to prefs.endpointConfigured
             ),
             runId = "mqtt"
         )
         // #endregion
-        if (prefs.role != AppRole.SENDER || !prefs.senderEnabled || !prefs.paired) return
+        if (prefs.role != AppRole.SENDER || !prefs.senderEnabled || !prefs.endpointConfigured) return
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
         if (messages.isEmpty()) return

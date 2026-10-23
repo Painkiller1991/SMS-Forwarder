@@ -138,11 +138,11 @@ fun SenderScreen(
                 StatusChip(
                     label = when {
                         state.pairCheckInProgress -> "Checking…"
-                        state.paired -> "Paired"
-                        state.receiverHost.isNotBlank() -> "Unreachable"
-                        else -> "Not paired"
+                        !state.paired -> "Not configured"
+                        state.reachable -> "Paired"
+                        else -> "Unreachable"
                     },
-                    active = state.paired
+                    active = state.reachable
                 )
                 if (state.receiverHost.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))

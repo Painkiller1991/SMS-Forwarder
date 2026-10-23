@@ -33,8 +33,9 @@ class BootReceiver : BroadcastReceiver() {
         )
         // #endregion
         when (prefs.role) {
-            AppRole.SENDER -> if (prefs.senderEnabled && prefs.paired) {
+            AppRole.SENDER -> if (prefs.senderEnabled && prefs.endpointConfigured) {
                 SenderKeepAliveService.start(context)
+                KeepAliveScheduler.schedule(context)
             }
             AppRole.RECEIVER -> if (prefs.receiveEnabled) {
                 ReceiveForegroundService.start(context)

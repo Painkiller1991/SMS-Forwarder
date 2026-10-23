@@ -86,7 +86,8 @@ class SmsOtpAutofillService : AutofillService() {
         val blob = "$hints $hint $idEntry"
         val keywords = listOf(
             "otp", "sms", "code", "pin", "verification", "verify",
-            "one-time", "onetime", "passcode", "2fa", "mfa", "token"
+            "one-time", "onetime", "passcode", "2fa", "mfa", "token",
+            "کد", "تایید", "تائید"
         )
         if (keywords.any { blob.contains(it) }) return true
 

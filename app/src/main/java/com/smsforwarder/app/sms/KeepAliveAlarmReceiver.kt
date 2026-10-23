@@ -32,8 +32,8 @@ class KeepAliveAlarmReceiver : BroadcastReceiver() {
                 ReceiveForegroundService.ensure(context)
                 KeepAliveScheduler.schedule(context)
             }
-            AppRole.SENDER -> if (prefs.senderEnabled && prefs.paired) {
-                SenderKeepAliveService.start(context)
+            AppRole.SENDER -> if (prefs.senderEnabled && prefs.endpointConfigured) {
+                SenderKeepAliveService.ensure(context)
                 KeepAliveScheduler.schedule(context)
             }
             AppRole.NONE -> Unit

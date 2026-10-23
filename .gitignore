@@ -20,3 +20,9 @@ out/
 .tools/
 .cursor/
 *.ndjson
+
+# Release signing — never commit secrets or the keystore
+keystore.properties
+keystore/
+*.jks
+*.keystore

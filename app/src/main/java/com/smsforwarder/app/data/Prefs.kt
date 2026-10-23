@@ -90,13 +90,21 @@ class Prefs(context: Context) {
     fun pairingPayload(localIp: String): String =
         "smsfw://pair?ip=$localIp&port=${ReceiveServer.DEFAULT_PORT}&s=$sharedSecret"
 
-    /** Saves endpoint credentials. Does not mark paired — caller must verify reachability. */
+    /**
+     * True when host + secret are saved (durable). Used for FGS / SMS gate.
+     * Reachability is UI-only and must not clear this flag.
+     */
+    val endpointConfigured: Boolean
+        get() = receiverHost.isNotBlank() && sharedSecret.length >= 16 && paired
+
+    /** Saves endpoint credentials and marks endpoint configured (not live reachability). */
     fun applyPairing(secret: String, host: String, port: Int) {
         val s = secret.trim()
         sp.edit()
             .putString(KEY_SECRET, s)
             .putString(KEY_HOST, host.trim())
             .putInt(KEY_PORT, port)
+            .putBoolean(KEY_PAIRED, true)
             .commit()
         SecretStore.write(appContext, s)
     }
@@ -109,6 +117,13 @@ class Prefs(context: Context) {
             sp.edit().putString(KEY_THEME, value.name).commit()
         }
 
+    /** Skip prompting for this versionCode until a newer release appears. */
+    var skippedUpdateVersionCode: Int
+        get() = sp.getInt(KEY_SKIPPED_UPDATE, 0)
+        set(value) {
+            sp.edit().putInt(KEY_SKIPPED_UPDATE, value).commit()
+        }
+
     companion object {
         const val PREFS_NAME = "sms_forwarder"
         private const val KEY_ROLE = "role"
@@ -119,5 +134,6 @@ class Prefs(context: Context) {
         private const val KEY_HOST = "receiver_host"
         private const val KEY_PORT = "receiver_port"
         private const val KEY_THEME = "theme_mode"
+        private const val KEY_SKIPPED_UPDATE = "skipped_update_version_code"
     }
 }

@@ -29,8 +29,10 @@ data class UiState(
     val role: AppRole = AppRole.NONE,
     val senderEnabled: Boolean = false,
     val receiveEnabled: Boolean = false,
-    /** True only after a successful reachability check to the receiver. */
+    /** Endpoint credentials saved (durable). Not the same as live reachability. */
     val paired: Boolean = false,
+    /** Live /health result for StatusChip only. */
+    val reachable: Boolean = false,
     val pairCheckInProgress: Boolean = false,
     val sharedSecret: String = "",
     val receiverHost: String = "",
@@ -54,8 +56,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (prefs.role == AppRole.RECEIVER && prefs.receiveEnabled) {
             ReceiveForegroundService.start(application)
         }
-        if (prefs.role == AppRole.SENDER && prefs.senderEnabled && prefs.paired) {
-            SenderKeepAliveService.start(application)
+        if (prefs.role == AppRole.SENDER && prefs.senderEnabled && prefs.endpointConfigured) {
+            startSenderKeepAlive()
         }
         if (prefs.role == AppRole.SENDER) {
             verifySenderPairing()
@@ -76,7 +78,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 role = prefs.role,
                 senderEnabled = prefs.senderEnabled,
                 receiveEnabled = prefs.receiveEnabled,
-                paired = prefs.paired,
+                paired = prefs.endpointConfigured,
                 sharedSecret = prefs.sharedSecret,
                 receiverHost = prefs.receiverHost,
                 receiverPort = prefs.receiverPort,
@@ -88,8 +90,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Hits receiver `/health`. Updates [Prefs.paired] and keep-alive from the live result.
-     * Call on app open (sender) and after every Save / QR pair.
+     * Hits receiver `/health` for UI StatusChip only.
+     * Never stops keep-alive or clears endpoint-configured on failure.
      */
     fun verifySenderPairing(onDone: ((ok: Boolean, detail: String) -> Unit)? = null) {
         if (prefs.role != AppRole.SENDER) {
@@ -99,24 +101,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val host = prefs.receiverHost.trim()
         val port = prefs.receiverPort
         val secret = prefs.sharedSecret
-        if (host.isBlank() || secret.isBlank()) {
-            applySenderPairedResult(false)
+        if (host.isBlank() || secret.length < 16 || !prefs.paired) {
+            _state.update {
+                it.copy(pairCheckInProgress = false, reachable = false, paired = false)
+            }
             onDone?.invoke(false, "Enter IP, port, and secret")
             return
         }
         pairVerifyJob?.cancel()
         pairVerifyJob = viewModelScope.launch {
-            // Clear sticky "Paired" immediately while checking.
-            prefs.paired = false
-            _state.update {
-                it.copy(pairCheckInProgress = true, paired = false)
-            }
+            _state.update { it.copy(pairCheckInProgress = true) }
             val result = withContext(Dispatchers.IO) {
                 ForwardClient.health(host, port)
             }
             val ok = result.isSuccess
-            applySenderPairedResult(ok)
-            _state.update { it.copy(pairCheckInProgress = false, paired = ok) }
+            _state.update {
+                it.copy(
+                    pairCheckInProgress = false,
+                    reachable = ok,
+                    paired = prefs.endpointConfigured
+                )
+            }
             onDone?.invoke(
                 ok,
                 if (ok) {
@@ -128,15 +133,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun applySenderPairedResult(ok: Boolean) {
+    private fun startSenderKeepAlive() {
         val ctx = getApplication<Application>()
-        prefs.paired = ok
-        if (ok && prefs.senderEnabled) {
-            SenderKeepAliveService.start(ctx)
-        } else {
-            SenderKeepAliveService.stop(ctx)
-        }
-        refreshFromPrefs()
+        SenderKeepAliveService.start(ctx)
+        KeepAliveScheduler.schedule(ctx)
+    }
+
+    private fun stopSenderKeepAlive() {
+        val ctx = getApplication<Application>()
+        SenderKeepAliveService.stop(ctx)
+        KeepAliveScheduler.cancel(ctx)
     }
 
     fun setThemeMode(mode: ThemeMode) {
@@ -154,9 +160,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (role != AppRole.RECEIVER && prefs.receiveEnabled) {
             ReceiveForegroundService.stop(ctx)
             prefs.receiveEnabled = false
+            KeepAliveScheduler.cancel(ctx)
         }
         if (role != AppRole.SENDER) {
-            if (prefs.senderEnabled) SenderKeepAliveService.stop(ctx)
+            if (prefs.senderEnabled) stopSenderKeepAlive()
             prefs.senderEnabled = false
         }
         prefs.role = role
@@ -164,8 +171,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             prefs.paired = true
             refreshFromPrefs()
         } else if (role == AppRole.SENDER) {
-            prefs.paired = false
             refreshFromPrefs()
+            if (prefs.senderEnabled && prefs.endpointConfigured) {
+                startSenderKeepAlive()
+            }
             verifySenderPairing()
         } else {
             refreshFromPrefs()
@@ -173,18 +182,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setSenderEnabled(enabled: Boolean) {
-        val ctx = getApplication<Application>()
         prefs.senderEnabled = enabled
-        if (enabled && prefs.paired) {
-            SenderKeepAliveService.start(ctx)
+        if (enabled && prefs.endpointConfigured) {
+            startSenderKeepAlive()
         } else {
-            SenderKeepAliveService.stop(ctx)
+            stopSenderKeepAlive()
         }
         refreshFromPrefs()
+        if (enabled) verifySenderPairing()
     }
 
     fun setReceiveEnabled(context: Context, enabled: Boolean) {
-        // Write cross-process flag before starting/stopping :recv
         prefs.receiveEnabled = enabled
         // #region agent log
         AgentDebugLog.log(
@@ -208,13 +216,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun applyPairing(info: PairingInfo, onVerified: ((ok: Boolean, detail: String) -> Unit)? = null) {
         prefs.applyPairing(info.secret, info.host, info.port)
-        applySenderPairedResult(false)
+        refreshFromPrefs()
+        if (prefs.senderEnabled) startSenderKeepAlive()
         verifySenderPairing(onVerified)
     }
 
     /**
      * Manual IP / port / secret. Returns a sync validation error, or null if saved —
-     * then [verifySenderPairing] runs and reports reachability via [onVerified].
+     * then [verifySenderPairing] reports reachability via [onVerified] (UI only).
      */
     fun saveManualEndpoint(
         host: String,
@@ -229,7 +238,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (s.length < 16) return "Secret too short — copy from receiver or scan QR"
         if (p !in 1..65535) return "Port out of range"
         prefs.applyPairing(s, h, p)
-        applySenderPairedResult(false)
+        refreshFromPrefs()
+        if (prefs.senderEnabled) startSenderKeepAlive()
         verifySenderPairing(onVerified)
         return null
     }
@@ -242,8 +252,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun testSendToReceiver(onDone: (ok: Boolean, detail: String) -> Unit) {
         viewModelScope.launch {
-            if (!prefs.paired || prefs.receiverHost.isBlank()) {
-                onDone(false, "Scan receiver QR first (needs IP)")
+            if (!prefs.endpointConfigured) {
+                onDone(false, "Save IP + port + secret first")
                 return@launch
             }
             val body = "TEST LAN — OTP 123456 — ${System.currentTimeMillis()}"
@@ -269,6 +279,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runId = "lan"
             )
             // #endregion
+            _state.update { it.copy(reachable = result.isSuccess) }
             if (result.isSuccess) {
                 onDone(true, "OK — sent to ${prefs.receiverHost}:${prefs.receiverPort}")
             } else {

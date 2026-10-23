@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import com.smsforwarder.app.R
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.debug.AgentDebugLog
@@ -29,10 +30,30 @@ class SenderKeepAliveService : Service() {
             hypothesisId = "KEEPALIVE",
             location = "SenderKeepAliveService.onStartCommand",
             message = "Keep-alive service started",
-            runId = "mqtt"
+            runId = "lan-send"
         )
         // #endregion
-        val notification = buildNotification()
+        startForegroundNow(buildNotification())
+        KeepAliveScheduler.schedule(this)
+        return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H_SWIPE",
+            location = "SenderKeepAliveService.onTaskRemoved",
+            message = "UI swiped — keep :send alive + schedule watchdog",
+            runId = "lan-send"
+        )
+        // #endregion
+        KeepAliveScheduler.schedule(this)
+        ServiceWatchdog.scheduleSoon(this)
+        startForegroundNow(buildNotification())
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun startForegroundNow(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceCompat.startForeground(
                 this,
@@ -43,7 +64,6 @@ class SenderKeepAliveService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-        return START_STICKY
     }
 
     private fun buildNotification(): Notification {
@@ -61,6 +81,7 @@ class SenderKeepAliveService : Service() {
             .setSilent(true)
             .setContentIntent(open)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
 
@@ -69,13 +90,20 @@ class SenderKeepAliveService : Service() {
         const val ACTION_STOP = "com.smsforwarder.app.STOP_SENDER_KEEPALIVE"
 
         fun start(context: Context) {
-            context.startForegroundService(Intent(context, SenderKeepAliveService::class.java))
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, SenderKeepAliveService::class.java)
+            )
         }
 
         fun stop(context: Context) {
             context.startService(
                 Intent(context, SenderKeepAliveService::class.java).apply { action = ACTION_STOP }
             )
+        }
+
+        fun ensure(context: Context) {
+            start(context)
         }
     }
 }
