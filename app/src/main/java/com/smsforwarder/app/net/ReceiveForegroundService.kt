@@ -41,6 +41,8 @@ import kotlinx.coroutines.launch
  */
 class ReceiveForegroundService : Service() {
     private var server: ReceiveServer? = null
+    /** Hostname the current [server] is bound to (LAN IPv4 or 0.0.0.0). */
+    private var boundHost: String? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastStatus: String = ""
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -172,7 +174,7 @@ class ReceiveForegroundService : Service() {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                scope.launch { ensureListening(updateUi = true) }
+                scope.launch { rebindIfNeeded(updateUi = true) }
             }
 
             override fun onLost(network: Network) {
@@ -189,18 +191,29 @@ class ReceiveForegroundService : Service() {
         runCatching { cm.registerNetworkCallback(req, cb) }
     }
 
+    private fun desiredBindHost(): String = WifiIp.localIpv4(this) ?: "0.0.0.0"
+
+    private fun stopLanServerQuiet() {
+        runCatching { server?.stop() }
+        server = null
+        boundHost = null
+    }
+
     private fun startLanServer(updateUi: Boolean) {
         val app = application as SmsForwarderApp
         val prefs = app.prefs
         if (!ListenFlag.read(this)) return
         try {
-            if (server != null) {
+            val host = desiredBindHost()
+            if (server != null && boundHost == host) {
                 if (updateUi) handler.post { updateListeningNotification(force = true) }
                 return
             }
+            if (server != null) stopLanServerQuiet()
             withBriefWake {
                 SecretStore.write(this, prefs.sharedSecret)
                 val receiveServer = ReceiveServer(
+                    hostname = host,
                     port = ReceiveServer.DEFAULT_PORT,
                     sharedSecretProvider = {
                         SecretStore.read(this) ?: prefs.sharedSecret
@@ -211,6 +224,7 @@ class ReceiveForegroundService : Service() {
                 )
                 receiveServer.startListening()
                 server = receiveServer
+                boundHost = host
             }
             // #region agent log
             AgentDebugLog.log(
@@ -218,7 +232,7 @@ class ReceiveForegroundService : Service() {
                 location = "ReceiveForegroundService.startLanServer",
                 message = "LAN server listening (calm mode)",
                 data = mapOf(
-                    "ip" to (WifiIp.localIpv4(this) ?: "?"),
+                    "ip" to (boundHost ?: "?"),
                     "port" to (server?.listeningPort ?: -1)
                 ),
                 runId = "lan-calm"
@@ -227,6 +241,7 @@ class ReceiveForegroundService : Service() {
             if (updateUi) handler.post { updateListeningNotification(force = true) }
         } catch (e: Exception) {
             Log.e(TAG, "LAN server start failed", e)
+            stopLanServerQuiet()
             handler.post {
                 lastStatus = "FAILED: ${e.message}"
                 startForegroundNow(buildListeningNotification(lastStatus))
@@ -234,17 +249,32 @@ class ReceiveForegroundService : Service() {
         }
     }
 
+    /** Restart listener when Wi‑Fi IP changes (e.g. VPN on/off). */
+    private fun rebindIfNeeded(updateUi: Boolean) {
+        if (!ListenFlag.read(this)) return
+        val host = desiredBindHost()
+        if (server != null && boundHost == host) {
+            if (updateUi) handler.post { updateListeningNotification(force = false) }
+            return
+        }
+        stopLanServerQuiet()
+        startLanServer(updateUi = true)
+    }
+
     private fun ensureListening(updateUi: Boolean) {
         if (!ListenFlag.read(this)) return
-        if (server == null) {
+        val host = desiredBindHost()
+        if (server == null || boundHost != host) {
             // #region agent log
             AgentDebugLog.log(
                 hypothesisId = "RECV_CLOSED",
                 location = "ReceiveForegroundService.ensureListening",
-                message = "Socket missing — start once",
+                message = "Socket missing or IP changed — rebind",
+                data = mapOf("bound" to boundHost, "desired" to host),
                 runId = "lan-calm"
             )
             // #endregion
+            stopLanServerQuiet()
             startLanServer(updateUi = true)
         } else if (updateUi) {
             handler.post { updateListeningNotification(force = false) }
@@ -323,8 +353,7 @@ class ReceiveForegroundService : Service() {
         }
         networkCallback = null
         // Do not clear ListenFlag / prefs here — UI owns ON/OFF (avoids race with quick OFF→ON)
-        runCatching { server?.stop() }
-        server = null
+        stopLanServerQuiet()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -337,8 +366,7 @@ class ReceiveForegroundService : Service() {
             }
         }
         networkCallback = null
-        runCatching { server?.stop() }
-        server = null
+        stopLanServerQuiet()
         scope.cancel()
         if (ListenFlag.read(applicationContext)) {
             KeepAliveScheduler.schedule(applicationContext)

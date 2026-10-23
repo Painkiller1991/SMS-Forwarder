@@ -1,10 +1,10 @@
 {
-  "versionCode": 28,
-  "versionName": "3.1.3-lan",
-  "apkAsset": "SMS-Forwarder-3.1.3-lan.apk",
+  "versionCode": 29,
+  "versionName": "3.1.4-lan",
+  "apkAsset": "SMS-Forwarder-3.1.4-lan.apk",
   "changelog": [
-    "Release-signed APK for GitHub updates",
-    "In-app update check from GitHub Releases",
-    "Changelog shown before you update"
+    "LAN keeps working when a system VPN is on (bind to Wi‑Fi)",
+    "Receive listener rebinds when Wi‑Fi IP changes",
+    "Clearer error when peer is unreachable under VPN"
   ]
 }

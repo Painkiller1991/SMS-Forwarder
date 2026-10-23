@@ -1,9 +1,9 @@
 package com.smsforwarder.app.net
 
+import android.content.Context
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.security.Auth
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -11,19 +11,13 @@ import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
-import java.util.concurrent.TimeUnit
 
-/** Local Wi‑Fi only — never leaves the LAN. Payload is AES-encrypted. */
+/** Local Wi‑Fi only — sockets bound to non-VPN LAN network when possible. */
 object ForwardClient {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .writeTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .build()
-
     private val plainType = "text/plain; charset=utf-8".toMediaType()
 
-    fun health(host: String, port: Int): Result<Unit> = runCatching {
+    fun health(context: Context, host: String, port: Int): Result<Unit> = runCatching {
+        val client = LanNetwork.lanHttpClient(context)
         val url = "http://$host:$port/health"
         val request = Request.Builder().url(url).get().build()
         client.newCall(request).execute().use { response ->
@@ -32,6 +26,7 @@ object ForwardClient {
     }
 
     fun forward(
+        context: Context,
         host: String,
         port: Int,
         secret: String,
@@ -40,18 +35,23 @@ object ForwardClient {
         timestamp: Long = System.currentTimeMillis()
     ): Result<Unit> = runCatching {
         require(host.isNotBlank()) { "Receiver host not set — scan QR again" }
+        val client = LanNetwork.lanHttpClient(context)
         val url = "http://$host:$port/sms"
         // #region agent log
         AgentDebugLog.log(
             hypothesisId = "H1",
             location = "ForwardClient.forward",
             message = "LAN POST starting",
-            data = mapOf("url" to url, "bodyLen" to body.length),
+            data = mapOf(
+                "url" to url,
+                "bodyLen" to body.length,
+                "lanIp" to (LanNetwork.ipv4(context) ?: "none")
+            ),
             runId = "lan-url"
         )
         // #endregion
 
-        val health = health(host, port)
+        val health = health(context, host, port)
         if (health.isFailure) {
             val err = health.exceptionOrNull()
             val kind = classify(err)
@@ -69,7 +69,7 @@ object ForwardClient {
             )
             // #endregion
             error(
-                "Cannot reach $host:$port ($kind). Same Wi‑Fi? Receive ON? Router AP isolation?"
+                "Cannot reach $host:$port ($kind). Same Wi‑Fi? VPN blocking LAN? Receive ON?"
             )
         }
 

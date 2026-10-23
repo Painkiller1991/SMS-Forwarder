@@ -112,7 +112,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         pairVerifyJob = viewModelScope.launch {
             _state.update { it.copy(pairCheckInProgress = true) }
             val result = withContext(Dispatchers.IO) {
-                ForwardClient.health(host, port)
+                ForwardClient.health(getApplication(), host, port)
             }
             val ok = result.isSuccess
             _state.update {
@@ -259,6 +259,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val body = "TEST LAN — OTP 123456 — ${System.currentTimeMillis()}"
             val result = withContext(Dispatchers.IO) {
                 ForwardClient.forward(
+                    context = getApplication(),
                     host = prefs.receiverHost,
                     port = prefs.receiverPort,
                     secret = prefs.sharedSecret,
@@ -301,6 +302,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val body = "TEST LAN self — OTP 123456 — ${System.currentTimeMillis()}"
             val result = withContext(Dispatchers.IO) {
                 ForwardClient.forward(
+                    context = getApplication(),
                     host = ip,
                     port = ReceiveServer.DEFAULT_PORT,
                     secret = prefs.sharedSecret,

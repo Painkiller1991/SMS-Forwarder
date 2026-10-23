@@ -60,6 +60,7 @@ class SmsForwardService : Service() {
                 )
                 // #endregion
                 val result = ForwardClient.forward(
+                    context = this@SmsForwardService,
                     host = prefs.receiverHost,
                     port = prefs.receiverPort,
                     secret = prefs.sharedSecret,

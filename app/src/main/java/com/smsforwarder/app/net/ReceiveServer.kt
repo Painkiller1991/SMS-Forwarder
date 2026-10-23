@@ -7,19 +7,22 @@ import fi.iki.elonen.NanoHTTPD
 import java.io.IOException
 
 /**
- * Local-only HTTP listener on Wi‑Fi. Does not use the internet.
- * Accepts encrypted SMS payloads on POST /sms.
+ * Local-only HTTP listener on Wi‑Fi. Binds to the LAN interface IP when known
+ * so VPN does not own the listen path.
  */
 class ReceiveServer(
+    hostname: String,
     port: Int,
     private val sharedSecretProvider: () -> String,
     private val onSms: (sender: String, body: String, timestamp: Long) -> Unit
-) : NanoHTTPD("0.0.0.0", port) {
+) : NanoHTTPD(hostname, port) {
+
+    private val bindHost = hostname
 
     @Throws(IOException::class)
     fun startListening() {
         start(SOCKET_READ_TIMEOUT, false)
-        Log.i(TAG, "LAN receive server on 0.0.0.0:$listeningPort")
+        Log.i(TAG, "LAN receive server on $bindHost:$listeningPort")
     }
 
     override fun serve(session: IHTTPSession): Response {
