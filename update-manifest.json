@@ -1,10 +1,11 @@
 ﻿{
-  "versionCode": 33,
-  "versionName": "3.1.8-lan",
-  "apkAsset": "SMS-Forwarder-3.1.8-lan.apk",
+  "versionCode": 34,
+  "versionName": "3.1.9-lan",
+  "apkAsset": "SMS-Forwarder-3.1.9-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Autofill always uses the latest OTP from disk (no stale in-memory code)",
-    "Fresh OTP for autofill after a new SMS arrives on the receiver"
+    "Non-OTP SMS readable on lock screen (PUBLIC channel)",
+    "Full-screen lock alert for non-OTP when allowed",
+    "Prompt to allow lock-screen / full-screen SMS on Android 14+"
   ]
 }

@@ -42,6 +42,7 @@ import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.net.SenderKeepAliveService
 import com.smsforwarder.app.net.ServiceWatchdog
+import com.smsforwarder.app.notify.InboxNotifier
 import com.smsforwarder.app.pairing.PairingParser
 import com.smsforwarder.app.ui.components.AppUpdateHost
 import com.smsforwarder.app.ui.components.LocalUpdateOffer
@@ -151,6 +152,24 @@ class MainActivity : ComponentActivity() {
         return selected.isNullOrBlank() || !selected.contains(packageName)
     }
 
+    fun needsFullScreenIntentSetup(): Boolean =
+        InboxNotifier.needsFullScreenIntentSetup(this)
+
+    fun openFullScreenIntentSettings() {
+        try {
+            startActivity(InboxNotifier.fullScreenIntentSettingsIntent(this))
+        } catch (_: Exception) {
+            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            })
+            Toast.makeText(
+                this,
+                "Allow full-screen / lock-screen notifications for this app",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
     fun sendDebugPing() {
         AgentDebugLog.sendTestPing { ok, detail ->
             runOnUiThread {
@@ -210,12 +229,16 @@ private fun AppRoot(
     var hasNotificationPermission by remember { mutableStateOf(activity.hasNotificationPermission()) }
     var needsBatteryUnrestricted by remember { mutableStateOf(activity.needsBatteryUnrestricted()) }
     var needsAutofillSetup by remember { mutableStateOf(activity.needsAutofillSetup()) }
+    var needsFullScreenIntentSetup by remember {
+        mutableStateOf(activity.needsFullScreenIntentSetup())
+    }
 
     fun refreshDeviceFlags() {
         hasSmsPermission = activity.hasSmsPermission()
         hasNotificationPermission = activity.hasNotificationPermission()
         needsBatteryUnrestricted = activity.needsBatteryUnrestricted()
         needsAutofillSetup = activity.needsAutofillSetup()
+        needsFullScreenIntentSetup = activity.needsFullScreenIntentSetup()
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -325,11 +348,13 @@ private fun AppRoot(
                 hasNotificationPermission = hasNotificationPermission,
                 needsBatteryUnrestricted = needsBatteryUnrestricted,
                 needsAutofillSetup = needsAutofillSetup,
+                needsFullScreenIntentSetup = needsFullScreenIntentSetup,
                 onToggleReceive = { enabled ->
                     requestReceiverPermissions()
                     vm.setReceiveEnabled(activity, enabled)
                 },
                 onOpenAutofill = { activity.openAutofillSettings() },
+                onOpenFullScreenIntent = { activity.openFullScreenIntentSettings() },
                 onClearInbox = vm::clearInbox,
                 onTestSend = {
                     vm.testSendFromReceiver { _, detail ->

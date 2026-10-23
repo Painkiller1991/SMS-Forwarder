@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.Button
@@ -61,8 +62,10 @@ fun ReceiverScreen(
     hasNotificationPermission: Boolean,
     needsBatteryUnrestricted: Boolean,
     needsAutofillSetup: Boolean,
+    needsFullScreenIntentSetup: Boolean = false,
     onToggleReceive: (Boolean) -> Unit,
     onOpenAutofill: () -> Unit,
+    onOpenFullScreenIntent: () -> Unit = {},
     onClearInbox: () -> Unit,
     onTestSend: () -> Unit,
     onBatteryUnrestricted: () -> Unit,
@@ -187,6 +190,14 @@ fun ReceiverScreen(
                             icon = { Icon(Icons.Default.Password, contentDescription = null) },
                             title = "Open Autofill settings",
                             onClick = onOpenAutofill
+                        )
+                    }
+                    if (needsFullScreenIntentSetup) {
+                        Spacer(Modifier.height(4.dp))
+                        ActionRow(
+                            icon = { Icon(Icons.Default.NotificationsActive, contentDescription = null) },
+                            title = "Allow lock-screen SMS alerts",
+                            onClick = onOpenFullScreenIntent
                         )
                     }
                 }

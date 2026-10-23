@@ -1,6 +1,7 @@
 package com.smsforwarder.app
 
 import android.app.Application
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.media.AudioAttributes
@@ -79,7 +80,7 @@ class SmsForwarderApp : Application() {
             }
         )
 
-        // New channel id so HIGH importance applies even if an old channel was created wrong
+        // v3: lockscreenVisibility PUBLIC so non-OTP body is readable on lock screen
         val alert = NotificationChannel(
             CHANNEL_INBOX,
             getString(R.string.inbox_channel_name),
@@ -89,6 +90,7 @@ class SmsForwarderApp : Application() {
             enableVibration(true)
             enableLights(true)
             setShowBadge(true)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             setSound(
                 RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
                 AudioAttributes.Builder()
@@ -109,6 +111,7 @@ class SmsForwarderApp : Application() {
                 description = getString(R.string.inbox_otp_channel_desc)
                 enableVibration(false)
                 setShowBadge(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setSound(
                     RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
                     AudioAttributes.Builder()
@@ -119,14 +122,15 @@ class SmsForwarderApp : Application() {
             }
         )
 
-        // Remove obsolete low/broken channel if present from older builds
+        // Remove obsolete channels from older builds
         runCatching { manager.deleteNotificationChannel("forwarded_sms") }
+        runCatching { manager.deleteNotificationChannel("forwarded_sms_alert_v2") }
     }
 
     companion object {
         const val CHANNEL_RECEIVE = "receive_server"
-        /** Heads-up SMS alerts (not the silent FGS channel). */
-        const val CHANNEL_INBOX = "forwarded_sms_alert_v2"
+        /** Heads-up SMS alerts; PUBLIC on lock screen. */
+        const val CHANNEL_INBOX = "forwarded_sms_alert_v3"
         /** Quieter OTP alerts to preserve autofill focus in other apps. */
         const val CHANNEL_INBOX_OTP = "forwarded_sms_otp_quiet_v1"
 
