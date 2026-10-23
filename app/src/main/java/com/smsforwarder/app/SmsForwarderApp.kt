@@ -80,15 +80,14 @@ class SmsForwarderApp : Application() {
             }
         )
 
-        // v3: lockscreenVisibility PUBLIC so non-OTP body is readable on lock screen
+        // v4: quiet shade (DEFAULT), PUBLIC on lock — no heads-up / vibration
         val alert = NotificationChannel(
             CHANNEL_INBOX,
             getString(R.string.inbox_channel_name),
-            NotificationManager.IMPORTANCE_HIGH
+            NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
             description = getString(R.string.inbox_channel_desc)
-            enableVibration(true)
-            enableLights(true)
+            enableVibration(false)
             setShowBadge(true)
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             setSound(
@@ -125,12 +124,13 @@ class SmsForwarderApp : Application() {
         // Remove obsolete channels from older builds
         runCatching { manager.deleteNotificationChannel("forwarded_sms") }
         runCatching { manager.deleteNotificationChannel("forwarded_sms_alert_v2") }
+        runCatching { manager.deleteNotificationChannel("forwarded_sms_alert_v3") }
     }
 
     companion object {
         const val CHANNEL_RECEIVE = "receive_server"
-        /** Heads-up SMS alerts; PUBLIC on lock screen. */
-        const val CHANNEL_INBOX = "forwarded_sms_alert_v3"
+        /** Quiet non-OTP SMS; PUBLIC on lock screen. */
+        const val CHANNEL_INBOX = "forwarded_sms_alert_v4"
         /** Quieter OTP alerts to preserve autofill focus in other apps. */
         const val CHANNEL_INBOX_OTP = "forwarded_sms_otp_quiet_v1"
 

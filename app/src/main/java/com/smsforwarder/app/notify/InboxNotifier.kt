@@ -1,6 +1,5 @@
 package com.smsforwarder.app.notify
 
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ClipData
 import android.content.ClipDescription
@@ -8,13 +7,11 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.media.RingtoneManager
-import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PersistableBundle
 import android.os.PowerManager
-import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -22,7 +19,6 @@ import com.smsforwarder.app.R
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.ui.MainActivity
-import com.smsforwarder.app.ui.SmsAlertActivity
 import java.util.concurrent.atomic.AtomicInteger
 
 object InboxNotifier {
@@ -78,45 +74,19 @@ object InboxNotifier {
             )
 
             val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            // OTP: DEFAULT channel / priority — avoid aggressive heads-up stealing autofill focus
             val channel = if (hasOtp) SmsForwarderApp.CHANNEL_INBOX_OTP else SmsForwarderApp.CHANNEL_INBOX
-            val priority = if (hasOtp) {
-                NotificationCompat.PRIORITY_DEFAULT
-            } else {
-                NotificationCompat.PRIORITY_MAX
-            }
             val builder = NotificationCompat.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(context.getString(R.string.notification_title_sms, sender))
                 .setContentText(body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-                .setPriority(priority)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setAutoCancel(true)
                 .setContentIntent(openIntent)
                 .setSound(sound)
                 .setOnlyAlertOnce(false)
-                .setTicker(body.take(80))
-
-            if (!hasOtp) {
-                builder.setDefaults(NotificationCompat.DEFAULT_ALL)
-                // Full-screen on lock when allowed — SmsAlertActivity shows full body
-                if (canUseFullScreenIntent(context)) {
-                    val alertIntent = Intent(context, SmsAlertActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        putExtra(SmsAlertActivity.EXTRA_SENDER, sender)
-                        putExtra(SmsAlertActivity.EXTRA_BODY, body)
-                    }
-                    val fullScreen = PendingIntent.getActivity(
-                        context,
-                        notifyId + 10_000,
-                        alertIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                    builder.setFullScreenIntent(fullScreen, true)
-                }
-            }
 
             if (hasOtp) {
                 val copyIntent = Intent(context, CopyOtpReceiver::class.java).apply {
@@ -139,31 +109,6 @@ object InboxNotifier {
             Log.e(TAG, "Failed to post notification", e)
         } finally {
             runCatching { if (wl.isHeld) wl.release() }
-        }
-    }
-
-    fun canUseFullScreenIntent(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
-        val nm = context.getSystemService(NotificationManager::class.java) ?: return false
-        return nm.canUseFullScreenIntent()
-    }
-
-    /** True when Android 14+ and full-screen intents are not yet allowed for this app. */
-    fun needsFullScreenIntentSetup(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return false
-        return !canUseFullScreenIntent(context)
-    }
-
-    /** Android 14+ settings to allow full-screen / lock-screen SMS alerts. */
-    fun fullScreenIntentSettingsIntent(context: Context): Intent {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-                data = Uri.parse("package:${context.packageName}")
-            }
-        } else {
-            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-            }
         }
     }
 

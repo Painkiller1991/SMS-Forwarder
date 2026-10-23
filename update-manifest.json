@@ -1,11 +1,10 @@
 ﻿{
-  "versionCode": 34,
-  "versionName": "3.1.9-lan",
-  "apkAsset": "SMS-Forwarder-3.1.9-lan.apk",
+  "versionCode": 35,
+  "versionName": "3.1.10-lan",
+  "apkAsset": "SMS-Forwarder-3.1.10-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Non-OTP SMS readable on lock screen (PUBLIC channel)",
-    "Full-screen lock alert for non-OTP when allowed",
-    "Prompt to allow lock-screen / full-screen SMS on Android 14+"
+    "Removed full-screen SMS alert",
+    "Quieter non-OTP notifications (no heads-up)"
   ]
 }
