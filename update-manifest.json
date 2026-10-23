@@ -1,10 +1,11 @@
 ﻿{
-  "versionCode": 36,
-  "versionName": "3.1.11-lan",
-  "apkAsset": "SMS-Forwarder-3.1.11-lan.apk",
+  "versionCode": 37,
+  "versionName": "3.1.12-lan",
+  "apkAsset": "SMS-Forwarder-3.1.12-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Swipe inbox cards for Copy, Pin, Delete",
-    "Tap OTP chip to copy; pinned messages survive Clear all"
+    "History for older unpinned messages (By number / By day)",
+    "Main inbox shows pinned + today only",
+    "Swipe History: Copy, Pin to inbox, Delete"
   ]
 }

@@ -10,11 +10,34 @@ interface MessageDao {
     @Query("SELECT * FROM messages ORDER BY pinned DESC, receivedAt DESC")
     fun observeAll(): Flow<List<MessageEntity>>
 
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE pinned = 1 OR receivedAt >= :dayStart
+        ORDER BY pinned DESC, receivedAt DESC
+        """
+    )
+    fun observeInbox(dayStart: Long): Flow<List<MessageEntity>>
+
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE pinned = 0 AND receivedAt < :dayStart
+        ORDER BY receivedAt DESC
+        """
+    )
+    fun observeHistory(dayStart: Long): Flow<List<MessageEntity>>
+
     @Insert
     suspend fun insert(message: MessageEntity): Long
 
-    @Query("DELETE FROM messages WHERE pinned = 0")
-    suspend fun clear()
+    /** Unpinned messages from today only (main inbox Clear all). */
+    @Query("DELETE FROM messages WHERE pinned = 0 AND receivedAt >= :dayStart")
+    suspend fun clearTodayUnpinned(dayStart: Long)
+
+    /** Older unpinned messages (History Delete all). */
+    @Query("DELETE FROM messages WHERE pinned = 0 AND receivedAt < :dayStart")
+    suspend fun clearHistory(dayStart: Long)
 
     @Query("DELETE FROM messages WHERE id = :id AND pinned = 0")
     suspend fun deleteById(id: Long)

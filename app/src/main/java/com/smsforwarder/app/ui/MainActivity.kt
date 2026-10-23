@@ -47,6 +47,7 @@ import com.smsforwarder.app.pairing.PairingParser
 import com.smsforwarder.app.ui.components.AppUpdateHost
 import com.smsforwarder.app.ui.components.LocalUpdateOffer
 import com.smsforwarder.app.ui.components.rememberUpdateOfferController
+import com.smsforwarder.app.ui.screens.HistoryScreen
 import com.smsforwarder.app.ui.screens.ReceiverScreen
 import com.smsforwarder.app.ui.screens.RolePickerScreen
 import com.smsforwarder.app.ui.screens.SenderScreen
@@ -223,6 +224,7 @@ private fun AppRoot(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshDeviceFlags()
+                vm.refreshDayBoundary()
                 if (vm.state.value.role == AppRole.SENDER) {
                     vm.verifySenderPairing()
                 }
@@ -319,57 +321,77 @@ private fun AppRoot(
         )
 
         AppRole.RECEIVER -> {
+            var showHistory by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) { vm.refreshPairingQr() }
-            ReceiverScreen(
-                state = state,
-                messages = state.messages,
-                hasNotificationPermission = hasNotificationPermission,
-                needsBatteryUnrestricted = needsBatteryUnrestricted,
-                needsAutofillSetup = needsAutofillSetup,
-                onToggleReceive = { enabled ->
-                    requestReceiverPermissions()
-                    vm.setReceiveEnabled(activity, enabled)
-                },
-                onOpenAutofill = { activity.openAutofillSettings() },
-                onClearInbox = vm::clearInbox,
-                onCopyOtp = { otp ->
-                    InboxNotifier.copyOtp(activity, otp)
-                    Toast.makeText(activity, "OTP copied", Toast.LENGTH_SHORT).show()
-                },
-                onCopyBody = { body ->
-                    val cm = activity.getSystemService(ClipboardManager::class.java)
-                    cm.setPrimaryClip(ClipData.newPlainText("sms", body))
-                    Toast.makeText(activity, "Message copied", Toast.LENGTH_SHORT).show()
-                },
-                onTogglePin = { msg ->
-                    vm.setMessagePinned(msg.id, !msg.pinned)
-                },
-                onDeleteMessage = { id ->
-                    vm.deleteMessage(id)
-                },
-                onTestSend = {
-                    vm.testSendFromReceiver { _, detail ->
-                        Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()
-                    }
-                },
-                onBatteryUnrestricted = { activity.requestBatteryUnrestricted() },
-                onCopyAddress = {
-                    val ip = state.localIp
-                    if (ip.isBlank()) {
-                        Toast.makeText(activity, "No Wi‑Fi IP yet", Toast.LENGTH_SHORT).show()
-                    } else {
-                        val text =
-                            "IP: $ip\nPort: ${ReceiveServer.DEFAULT_PORT}\nSecret: ${state.sharedSecret}"
-                        val cm = activity.getSystemService(ClipboardManager::class.java)
-                        cm.setPrimaryClip(ClipData.newPlainText("lan-address", text))
-                        Toast.makeText(activity, "Copied IP, port, secret", Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onThemeMode = vm::setThemeMode,
-                onSendDebugPing = { activity.sendDebugPing() },
-                onCopyDebugLog = { activity.copyDebugLog() },
-                onChangeRole = { vm.setRole(AppRole.NONE) }
-            )
+            val copyOtp: (String) -> Unit = { otp ->
+                InboxNotifier.copyOtp(activity, otp)
+                Toast.makeText(activity, "OTP copied", Toast.LENGTH_SHORT).show()
+            }
+            val copyBody: (String) -> Unit = { body ->
+                val cm = activity.getSystemService(ClipboardManager::class.java)
+                cm.setPrimaryClip(ClipData.newPlainText("sms", body))
+                Toast.makeText(activity, "Message copied", Toast.LENGTH_SHORT).show()
+            }
+            if (showHistory) {
+                HistoryScreen(
+                    messages = state.historyMessages,
+                    onBack = { showHistory = false },
+                    onClearHistory = vm::clearHistory,
+                    onCopyOtp = copyOtp,
+                    onCopyBody = copyBody,
+                    onPinToInbox = { msg ->
+                        vm.setMessagePinned(msg.id, true)
+                        Toast.makeText(activity, "Pinned to inbox", Toast.LENGTH_SHORT).show()
+                    },
+                    onDeleteMessage = { id -> vm.deleteMessage(id) }
+                )
+            } else {
+                ReceiverScreen(
+                    state = state,
+                    messages = state.inboxMessages,
+                    hasHistory = state.historyMessages.isNotEmpty(),
+                    hasNotificationPermission = hasNotificationPermission,
+                    needsBatteryUnrestricted = needsBatteryUnrestricted,
+                    needsAutofillSetup = needsAutofillSetup,
+                    onToggleReceive = { enabled ->
+                        requestReceiverPermissions()
+                        vm.setReceiveEnabled(activity, enabled)
+                    },
+                    onOpenAutofill = { activity.openAutofillSettings() },
+                    onClearInbox = vm::clearInbox,
+                    onOpenHistory = { showHistory = true },
+                    onCopyOtp = copyOtp,
+                    onCopyBody = copyBody,
+                    onTogglePin = { msg ->
+                        vm.setMessagePinned(msg.id, !msg.pinned)
+                    },
+                    onDeleteMessage = { id ->
+                        vm.deleteMessage(id)
+                    },
+                    onTestSend = {
+                        vm.testSendFromReceiver { _, detail ->
+                            Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onBatteryUnrestricted = { activity.requestBatteryUnrestricted() },
+                    onCopyAddress = {
+                        val ip = state.localIp
+                        if (ip.isBlank()) {
+                            Toast.makeText(activity, "No Wi‑Fi IP yet", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val text =
+                                "IP: $ip\nPort: ${ReceiveServer.DEFAULT_PORT}\nSecret: ${state.sharedSecret}"
+                            val cm = activity.getSystemService(ClipboardManager::class.java)
+                            cm.setPrimaryClip(ClipData.newPlainText("lan-address", text))
+                            Toast.makeText(activity, "Copied IP, port, secret", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onThemeMode = vm::setThemeMode,
+                    onSendDebugPing = { activity.sendDebugPing() },
+                    onCopyDebugLog = { activity.copyDebugLog() },
+                    onChangeRole = { vm.setRole(AppRole.NONE) }
+                )
+            }
         }
     }
     } // Box

@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.data.AppRole
+import com.smsforwarder.app.data.DayBoundary
 import com.smsforwarder.app.data.MessageEntity
 import com.smsforwarder.app.data.ThemeMode
 import com.smsforwarder.app.debug.AgentDebugLog
@@ -18,10 +19,13 @@ import com.smsforwarder.app.net.WifiIp
 import com.smsforwarder.app.pairing.PairingInfo
 import com.smsforwarder.app.update.UpdateLock
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -41,13 +45,18 @@ data class UiState(
     val pairingPayload: String = "",
     val localIp: String = "",
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    val messages: List<MessageEntity> = emptyList()
+    /** Pinned + today's messages (main inbox). */
+    val inboxMessages: List<MessageEntity> = emptyList(),
+    /** Older unpinned messages (History). */
+    val historyMessages: List<MessageEntity> = emptyList()
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as SmsForwarderApp
     private val prefs = app.prefs
     private var pairVerifyJob: Job? = null
+    private val dayStartFlow = MutableStateFlow(DayBoundary.startOfTodayMillis())
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -70,10 +79,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            app.database.messageDao().observeAll().collect { list ->
-                _state.update { it.copy(messages = list) }
+            dayStartFlow.flatMapLatest { dayStart ->
+                val dao = app.database.messageDao()
+                combine(
+                    dao.observeInbox(dayStart),
+                    dao.observeHistory(dayStart)
+                ) { inbox, history -> inbox to history }
+            }.collect { (inbox, history) ->
+                _state.update {
+                    it.copy(inboxMessages = inbox, historyMessages = history)
+                }
             }
         }
+    }
+
+    /** Call on resume so midnight rollover moves messages into History. */
+    fun refreshDayBoundary() {
+        dayStartFlow.value = DayBoundary.startOfTodayMillis()
     }
 
     /** Refresh UI after a forced update shut down LAN features. */
@@ -266,7 +288,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearInbox() {
         viewModelScope.launch {
-            app.database.messageDao().clear()
+            app.database.messageDao()
+                .clearTodayUnpinned(DayBoundary.startOfTodayMillis())
+        }
+    }
+
+    fun clearHistory() {
+        viewModelScope.launch {
+            app.database.messageDao()
+                .clearHistory(DayBoundary.startOfTodayMillis())
         }
     }
 

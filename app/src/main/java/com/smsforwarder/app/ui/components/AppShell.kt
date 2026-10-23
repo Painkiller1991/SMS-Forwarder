@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -51,6 +52,7 @@ fun AppShell(
     onDebugPing: () -> Unit,
     onCopyDebugLog: () -> Unit,
     onChangeRole: (() -> Unit)? = null,
+    onOpenHistory: (() -> Unit)? = null,
     content: @Composable (PaddingValues) -> Unit
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -86,6 +88,17 @@ fun AppShell(
                     Spacer(Modifier.height(16.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(8.dp))
+                    if (onOpenHistory != null) {
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Default.History, contentDescription = null) },
+                            label = { Text("History") },
+                            selected = false,
+                            onClick = {
+                                closeDrawer()
+                                onOpenHistory()
+                            }
+                        )
+                    }
                     if (pendingUpdate != null) {
                         NavigationDrawerItem(
                             icon = { Icon(Icons.Default.SystemUpdate, contentDescription = null) },

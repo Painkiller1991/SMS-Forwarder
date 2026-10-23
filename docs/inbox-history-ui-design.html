@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Inbox history — UI design ideas</title>
+  <style>
+    :root {
+      --bg: #eef1f4;
+      --surface: #ffffff;
+      --card: #e8eaed;
+      --on: #1a1c1e;
+      --muted: #5f6368;
+      --line: #d5d9de;
+      --primary: #1565c0;
+      --primary-soft: #dce8ff;
+      --pin: #f9a825;
+      --pin-soft: #fff8e1;
+      --otp: #c8e6c9;
+      --otp-fg: #1b5e20;
+      --drawer: #f7f8fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--on);
+      padding: 24px 16px 64px;
+    }
+    h1 { font-size: 1.35rem; font-weight: 600; margin: 0 0 6px; }
+    .lede { color: var(--muted); max-width: 720px; margin: 0 0 28px; line-height: 1.45; font-size: 0.95rem; }
+    .note {
+      max-width: 720px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 0.88rem;
+      color: var(--muted);
+      margin-bottom: 28px;
+      line-height: 1.45;
+    }
+    .note strong { color: var(--on); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 24px;
+      align-items: start;
+    }
+    .panel h2 {
+      font-size: 0.95rem;
+      margin: 0 0 8px;
+      font-weight: 600;
+    }
+    .panel .cap {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0 0 12px;
+      line-height: 1.4;
+      min-height: 2.8em;
+    }
+    .phone {
+      background: var(--surface);
+      border-radius: 28px;
+      padding: 16px 14px 22px;
+      box-shadow: 0 10px 28px rgba(0,0,0,.07);
+      position: relative;
+      overflow: hidden;
+      min-height: 520px;
+    }
+    .app-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 1.05rem;
+      margin-bottom: 14px;
+    }
+    .icon-btn {
+      width: 36px; height: 36px;
+      border: 0; border-radius: 50%;
+      background: transparent;
+      cursor: pointer;
+      font-size: 1.15rem;
+      color: var(--on);
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--primary-soft);
+      color: #0d47a1;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border: 0;
+      cursor: pointer;
+    }
+    .inbox-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .inbox-head h3 { margin: 0; font-size: 1rem; }
+    .hint { color: var(--muted); font-size: 0.75rem; margin: 0 0 12px; }
+    .section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 14px 0 8px;
+    }
+    .card {
+      background: var(--card);
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+    }
+    .card .top {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .sender { font-weight: 600; font-size: 0.9rem; }
+    .time { font-size: 0.7rem; color: var(--muted); white-space: nowrap; }
+    .body { font-size: 0.82rem; line-height: 1.35; margin: 0; }
+    .meta { display: flex; gap: 6px; align-items: center; }
+    .pinned {
+      background: var(--pin-soft);
+      color: #f57f17;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+    }
+    .otp {
+      display: inline-block;
+      margin-top: 6px;
+      background: var(--otp);
+      color: var(--otp-fg);
+      font-weight: 700;
+      font-size: 0.72rem;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+    .link-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f3f6fa;
+      border: 1px dashed #b0bec5;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-top: 10px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--primary);
+    }
+    .link-row span { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
+    .drawer {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,.35);
+      display: none;
+      z-index: 5;
+    }
+    .drawer.open { display: block; }
+    .drawer-panel {
+      width: 78%;
+      max-width: 260px;
+      height: 100%;
+      background: var(--drawer);
+      padding: 20px 14px;
+      box-shadow: 4px 0 20px rgba(0,0,0,.12);
+    }
+    .drawer-panel h4 { margin: 0 0 16px; font-size: 1rem; }
+    .nav-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 0;
+      background: transparent;
+      padding: 12px 10px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      color: var(--on);
+      margin-bottom: 4px;
+    }
+    .nav-item.active, .nav-item:hover { background: var(--primary-soft); color: #0d47a1; font-weight: 600; }
+    .nav-item .sub { display: block; font-size: 0.7rem; color: var(--muted); font-weight: 400; margin-top: 2px; }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      background: #eceff1;
+      border-radius: 10px;
+      padding: 3px;
+      margin-bottom: 12px;
+    }
+    .tab {
+      flex: 1;
+      border: 0;
+      background: transparent;
+      padding: 8px 6px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .tab.active { background: #fff; color: var(--on); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .group {
+      margin-bottom: 14px;
+    }
+    .group-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 2px 8px;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .group-head .count {
+      background: #eceff1;
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+    .day-divider {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 12px 0 6px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--line);
+    }
+    .screen { display: none; }
+    .screen.active { display: block; }
+    .pick {
+      margin-top: 18px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .pick strong { color: var(--on); }
+    .badge-rec {
+      display: inline-block;
+      background: #e8f5e9;
+      color: #2e7d32;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <h1>Inbox — older messages (design only)</h1>
+  <p class="lede">
+    Keep <strong>Pinned</strong> and <strong>Today</strong> exactly as they are on the main inbox.
+    Older unpinned messages move out of the way into History.
+  </p>
+  <div class="note">
+    <strong>Not built yet</strong> — open this file in a browser to click through the ideas.
+    Main inbox stays short; yesterday and older live on a separate History surface.
+  </div>
+
+  <div class="grid">
+    <!-- Idea A: recommended -->
+    <div class="panel">
+      <h2>A — Sidebar → History page <span class="badge-rec">Recommended</span></h2>
+      <p class="cap">
+        Daily inbox unchanged. Menu opens History for old unpinned messages,
+        grouped by sender number, with day labels inside each group.
+      </p>
+      <div class="phone" id="phoneA">
+        <div class="drawer" id="drawerA">
+          <div class="drawer-panel">
+            <h4>Receive</h4>
+            <button type="button" class="nav-item active" data-a="inbox">Inbox
+              <span class="sub">Pinned + today</span>
+            </button>
+            <button type="button" class="nav-item" data-a="history">History
+              <span class="sub">Older unpinned</span>
+            </button>
+            <button type="button" class="nav-item" disabled style="opacity:.45">Listening
+              <span class="sub">unchanged</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="screen active" id="a-inbox">
+          <div class="app-bar">
+            <button type="button" class="icon-btn" id="openDrawerA" aria-label="Menu">☰</button>
+            Receive mode
+          </div>
+          <div class="inbox-head">
+            <h3>Inbox</h3>
+            <button type="button" class="chip">Clear all</button>
+          </div>
+          <p class="hint">Pinned + today only — swipe actions unchanged</p>
+
+          <div class="section-label">Pinned</div>
+          <div class="card">
+            <div class="top">
+              <span class="sender">+98 912…001</span>
+              <span class="meta"><span class="pinned">Pinned</span><span class="time">Mon</span></span>
+            </div>
+            <p class="body">Keep this number for bank alerts.</p>
+          </div>
+
+          <div class="section-label">Today</div>
+          <div class="card">
+            <div class="top">
+              <span class="sender">BankAlert</span>
+              <span class="time">14:22</span>
+            </div>
+            <p class="body">Your verification code is 482917.</p>
+            <span class="otp">OTP  482917</span>
+          </div>
+          <div class="card">
+            <div class="top">
+              <span class="sender">ShopNotify</span>
+              <span class="time">11:05</span>
+            </div>
+            <p class="body">Order shipped, tracking ABC123.</p>
+          </div>
+
+          <div class="link-row" data-a="history">
+            Older messages
+            <span>Yesterday &amp; before →</span>
+          </div>
+        </div>
+
+        <div class="screen" id="a-history">
+          <div class="app-bar">
+            <button type="button" class="icon-btn" data-a="inbox" aria-label="Back">←</button>
+            History
+          </div>
+          <p class="hint">Unpinned only · grouped by number · Clear all does not apply here</p>
+
+          <div class="group">
+            <div class="group-head">BankAlert <span class="count">3</span></div>
+            <div class="day-divider">Yesterday</div>
+            <div class="card">
+              <div class="top"><span class="sender">BankAlert</span><span class="time">18:40</span></div>
+              <p class="body">Code 110293 expired.</p>
+            </div>
+            <div class="day-divider">Tue 21 Oct</div>
+            <div class="card">
+              <div class="top"><span class="sender">BankAlert</span><span class="time">09:12</span></div>
+              <p class="body">Login from new device.</p>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-head">+98 935…442 <span class="count">2</span></div>
+            <div class="day-divider">Yesterday</div>
+            <div class="card">
+              <div class="top"><span class="sender">+98 935…442</span><span class="time">21:03</span></div>
+              <p class="body">Call me when free.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="pick"><strong>Why:</strong> Main screen stays short. Old clutter lives one tap away (menu or “Older messages”).</p>
+    </div>
+
+    <!-- Idea B -->
+    <div class="panel">
+      <h2>B — Tabs on same screen</h2>
+      <p class="cap">
+        Top tabs: Today | Older. Pinned always stick above the tab content.
+        Same page, no sidebar.
+      </p>
+      <div class="phone" id="phoneB">
+        <div class="app-bar">Receive mode</div>
+        <div class="inbox-head">
+          <h3>Inbox</h3>
+          <button type="button" class="chip">Clear all</button>
+        </div>
+
+        <div class="section-label">Pinned (always)</div>
+        <div class="card">
+          <div class="top">
+            <span class="sender">+98 912…001</span>
+            <span class="meta"><span class="pinned">Pinned</span><span class="time">Mon</span></span>
+          </div>
+          <p class="body">Keep this number for bank alerts.</p>
+        </div>
+
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab active" data-b="today">Today</button>
+          <button type="button" class="tab" data-b="older">Older</button>
+        </div>
+
+        <div class="screen active" id="b-today">
+          <div class="card">
+            <div class="top"><span class="sender">BankAlert</span><span class="time">14:22</span></div>
+            <p class="body">Your verification code is 482917.</p>
+            <span class="otp">OTP  482917</span>
+          </div>
+          <div class="card">
+            <div class="top"><span class="sender">ShopNotify</span><span class="time">11:05</span></div>
+            <p class="body">Order shipped, tracking ABC123.</p>
+          </div>
+        </div>
+        <div class="screen" id="b-older">
+          <div class="day-divider">Yesterday</div>
+          <div class="card">
+            <div class="top"><span class="sender">BankAlert</span><span class="time">18:40</span></div>
+            <p class="body">Code 110293 expired.</p>
+          </div>
+          <div class="day-divider">Tue 21 Oct</div>
+          <div class="card">
+            <div class="top"><span class="sender">+98 935…442</span><span class="time">21:03</span></div>
+            <p class="body">Call me when free.</p>
+          </div>
+        </div>
+      </div>
+      <p class="pick"><strong>Tradeoff:</strong> Faster switch, but Today/Older share one long scroll context; less “room” for number grouping.</p>
+    </div>
+
+    <!-- Idea C -->
+    <div class="panel">
+      <h2>C — History by day, then number</h2>
+      <p class="cap">
+        Same History entry as A, but primary grouping is by calendar day,
+        with sender chips inside the day.
+      </p>
+      <div class="phone">
+        <div class="app-bar">
+          <span class="icon-btn" aria-hidden="true">←</span>
+          History
+        </div>
+        <p class="hint">Day-first · tap a sender chip to filter (concept)</p>
+
+        <div class="day-divider">Yesterday · 22 Oct</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">
+          <span class="chip">BankAlert</span>
+          <span class="chip" style="background:#eceff1;color:var(--muted);">+98 935…</span>
+        </div>
+        <div class="card">
+          <div class="top"><span class="sender">BankAlert</span><span class="time">18:40</span></div>
+          <p class="body">Code 110293 expired.</p>
+        </div>
+        <div class="card">
+          <div class="top"><span class="sender">+98 935…442</span><span class="time">21:03</span></div>
+          <p class="body">Call me when free.</p>
+        </div>
+
+        <div class="day-divider">Tue 21 Oct</div>
+        <div class="card">
+          <div class="top"><span class="sender">BankAlert</span><span class="time">09:12</span></div>
+          <p class="body">Login from new device.</p>
+        </div>
+      </div>
+      <p class="pick"><strong>Use when:</strong> You think by “what day” more than “which number”.</p>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:28px;">
+    <strong>Suggested default for later build:</strong> Idea A —
+    main inbox = pinned + today (current swipe UI untouched);
+    sidebar + “Older messages” open History;
+    History = unpinned only, grouped by sender, day dividers inside each group.
+  </div>
+
+  <script>
+    function showA(name) {
+      document.getElementById("a-inbox").classList.toggle("active", name === "inbox");
+      document.getElementById("a-history").classList.toggle("active", name === "history");
+      document.getElementById("drawerA").classList.remove("open");
+      document.querySelectorAll("[data-a]").forEach(function (el) {
+        if (el.classList.contains("nav-item")) {
+          el.classList.toggle("active", el.getAttribute("data-a") === name);
+        }
+      });
+    }
+    document.getElementById("openDrawerA").addEventListener("click", function () {
+      document.getElementById("drawerA").classList.add("open");
+    });
+    document.getElementById("drawerA").addEventListener("click", function (e) {
+      if (e.target === this) this.classList.remove("open");
+    });
+    document.querySelectorAll("[data-a]").forEach(function (el) {
+      el.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var name = el.getAttribute("data-a");
+        if (name) showA(name);
+      });
+    });
+    document.querySelectorAll("[data-b]").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        var name = tab.getAttribute("data-b");
+        document.querySelectorAll("#phoneB .tab").forEach(function (t) {
+          t.classList.toggle("active", t === tab);
+        });
+        document.getElementById("b-today").classList.toggle("active", name === "today");
+        document.getElementById("b-older").classList.toggle("active", name === "older");
+      });
+    });
+  </script>
+</body>
+</html>
