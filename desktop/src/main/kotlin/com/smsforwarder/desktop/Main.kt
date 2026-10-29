@@ -277,7 +277,7 @@ private fun ReceiverApp(
                 Text("GitHub releases")
             }
             Text(
-                "v1.0.0 · close window to tray",
+                "v1.0.1 · close window to tray",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.CenterVertically)

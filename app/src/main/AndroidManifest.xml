@@ -75,7 +75,11 @@
 
         <receiver
             android:name=".notify.CopyOtpReceiver"
-            android:exported="false" />
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.smsforwarder.app.COPY_OTP" />
+            </intent-filter>
+        </receiver>
 
         <!-- Own process so swiping the UI away does not kill the LAN listener -->
         <service

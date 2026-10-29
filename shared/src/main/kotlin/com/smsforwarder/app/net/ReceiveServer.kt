@@ -2,6 +2,7 @@ package com.smsforwarder.app.net
 
 import com.smsforwarder.app.security.Auth
 import fi.iki.elonen.NanoHTTPD
+import org.json.JSONObject
 import java.io.IOException
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -9,12 +10,14 @@ import java.util.logging.Logger
 /**
  * Local Wi‑Fi HTTP listener used by Android and Windows receivers.
  * Prefer binding to a LAN IPv4 (not a VPN tunnel address) when possible.
+ *
+ * [onSms] must persist (or dedup) before returning; status is "stored" or "duplicate".
  */
 class ReceiveServer(
     hostname: String,
     port: Int,
     private val sharedSecretProvider: () -> String,
-    private val onSms: (sender: String, body: String, timestamp: Long) -> Unit
+    private val onSms: (sender: String, body: String, timestamp: Long, msgId: String?) -> String
 ) : NanoHTTPD(hostname, port) {
 
     val bindHost: String = hostname
@@ -45,11 +48,17 @@ class ReceiveServer(
             val body = json.getString("body")
             val timestamp = json.getLong("timestamp")
             val signature = json.getString("signature")
+            val msgId = json.optString("msgId").trim().ifBlank { null }
             if (!Auth.verify(secret, timestamp, sender, body, signature)) {
                 return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Unauthorized")
             }
-            onSms(sender, body, timestamp)
-            newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "OK")
+            val status = onSms(sender, body, timestamp, msgId).ifBlank { "stored" }
+            val ack = JSONObject()
+                .put("ok", true)
+                .put("msgId", msgId ?: JSONObject.NULL)
+                .put("status", status)
+                .toString()
+            newFixedLengthResponse(Response.Status.OK, "application/json", ack)
         } catch (e: Exception) {
             LOG.log(Level.WARNING, "Failed to handle SMS POST", e)
             newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, e.message ?: "Bad request")
@@ -59,7 +68,6 @@ class ReceiveServer(
     companion object {
         private val LOG = Logger.getLogger("ReceiveServer")
         const val DEFAULT_PORT = 18765
-        /** Fallback when no Wi‑Fi IPv4 is known yet. */
         const val BIND_ALL = "0.0.0.0"
     }
 }

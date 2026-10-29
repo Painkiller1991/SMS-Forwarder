@@ -12,6 +12,7 @@ import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -52,12 +53,12 @@ object ForwardClient {
         secret: String,
         sender: String,
         body: String,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = System.currentTimeMillis(),
+        msgId: String = UUID.randomUUID().toString()
     ): Result<Unit> = runCatching {
         require(host.isNotBlank()) { "Receiver host not set — scan QR again" }
         val client = LanNetwork.lanHttpClient(context)
         val url = "http://$host:$port/sms"
-        // #region agent log
         AgentDebugLog.log(
             hypothesisId = "H1",
             location = "ForwardClient.forward",
@@ -65,21 +66,20 @@ object ForwardClient {
             data = mapOf(
                 "url" to url,
                 "bodyLen" to body.length,
+                "msgId" to msgId.take(36),
                 "lanIp" to (LanNetwork.ipv4(context) ?: "none")
             ),
             runId = "lan-url"
         )
-        // #endregion
 
         val health = health(context, host, port)
         if (health.isFailure) {
             val err = health.exceptionOrNull()
             val kind = classify(err)
-            // #region agent log
             AgentDebugLog.log(
                 hypothesisId = "H1",
                 location = "ForwardClient.health",
-                message = "LAN health failed — cannot reach receiver URL",
+                message = "LAN health failed",
                 data = mapOf(
                     "url" to "http://$host:$port/health",
                     "kind" to kind,
@@ -87,7 +87,6 @@ object ForwardClient {
                 ),
                 runId = "lan-url"
             )
-            // #endregion
             error(
                 "Cannot reach $host:$port ($kind). Same Wi‑Fi? VPN blocking LAN? Receive ON?"
             )
@@ -99,14 +98,14 @@ object ForwardClient {
             .put("body", body)
             .put("timestamp", timestamp)
             .put("signature", signature)
+            .put("msgId", msgId)
         val blob = PayloadCrypto.encryptJson(secret, json)
         val request = Request.Builder()
             .url(url)
             .post(blob.toRequestBody(plainType))
             .build()
         client.newCall(request).execute().use { response ->
-            val respBody = response.body?.string().orEmpty()
-            // #region agent log
+            val respBody = response.body?.string().orEmpty().trim()
             AgentDebugLog.log(
                 hypothesisId = "H3",
                 location = "ForwardClient.forward.response",
@@ -114,15 +113,16 @@ object ForwardClient {
                 data = mapOf("url" to url, "code" to response.code, "body" to respBody.take(80)),
                 runId = "lan-url"
             )
-            // #endregion
             if (!response.isSuccessful) {
                 error("HTTP ${response.code}: $respBody")
+            }
+            if (!isAckOk(respBody)) {
+                error("Bad ACK: ${respBody.take(80)}")
             }
         }
     }.fold(
         onSuccess = { Result.success(Unit) },
         onFailure = { e ->
-            // #region agent log
             AgentDebugLog.log(
                 hypothesisId = "H1",
                 location = "ForwardClient.forward.fail",
@@ -133,27 +133,35 @@ object ForwardClient {
                 ),
                 runId = "lan-url"
             )
-            // #endregion
             Result.failure(e)
         }
     )
 
-    /**
-     * Best-effort parallel POST to every enabled endpoint.
-     * One failure does not cancel the others.
-     */
+    /** Accept JSON ACK or legacy plaintext OK. */
+    fun isAckOk(respBody: String): Boolean {
+        val raw = respBody.trim()
+        if (raw.equals("OK", ignoreCase = true) || raw.equals("ok", ignoreCase = true)) {
+            return true
+        }
+        return runCatching {
+            val o = JSONObject(raw)
+            o.optBoolean("ok", false)
+        }.getOrDefault(false)
+    }
+
     fun forwardToAll(
         context: Context,
         endpoints: List<ReceiverEndpoint>,
         sender: String,
         body: String,
-        timestamp: Long = System.currentTimeMillis()
+        timestamp: Long = System.currentTimeMillis(),
+        msgId: String = UUID.randomUUID().toString()
     ): FanoutResult {
         val targets = endpoints.filter { it.enabled && it.isValid() }
         if (targets.isEmpty()) return FanoutResult(0, 0, emptyList())
         if (targets.size == 1) {
             val ep = targets.first()
-            val r = forward(context, ep.host, ep.port, ep.secret, sender, body, timestamp)
+            val r = forward(context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId)
             return if (r.isSuccess) {
                 FanoutResult(1, 1, emptyList())
             } else {
@@ -166,12 +174,11 @@ object ForwardClient {
         try {
             val futures = targets.map { ep ->
                 pool.submit {
-                    val r = forward(context, ep.host, ep.port, ep.secret, sender, body, timestamp)
-                    if (r.isSuccess) {
-                        okCount.incrementAndGet()
-                    } else {
-                        failures.add(ep.displayName)
-                    }
+                    val r = forward(
+                        context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId
+                    )
+                    if (r.isSuccess) okCount.incrementAndGet()
+                    else failures.add(ep.displayName)
                 }
             }
             futures.forEach { it.get(30, TimeUnit.SECONDS) }

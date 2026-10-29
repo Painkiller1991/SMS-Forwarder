@@ -23,15 +23,24 @@ class OtpStore(
     private val latest = AtomicReference<StoredOtp?>(null)
 
     fun put(code: String, from: String) {
+        putVerified(code, from)
+    }
+
+    /** Writes OTP and returns true if disk read-back matches. */
+    fun putVerified(code: String, from: String): Boolean {
         val otp = StoredOtp(code = code.trim(), from = from.trim())
         latest.set(otp)
-        runCatching {
+        val wrote = runCatching {
             val json = JSONObject()
                 .put("code", otp.code)
                 .put("from", otp.from)
                 .put("storedAt", otp.storedAt)
             file.writeText(json.toString())
-        }
+            true
+        }.getOrDefault(false)
+        if (!wrote) return false
+        val disk = readFile()
+        return disk != null && disk.code == otp.code
     }
 
     /**

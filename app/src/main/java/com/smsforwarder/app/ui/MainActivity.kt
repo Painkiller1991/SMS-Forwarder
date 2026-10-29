@@ -225,8 +225,13 @@ private fun AppRoot(
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshDeviceFlags()
                 vm.refreshDayBoundary()
-                if (vm.state.value.role == AppRole.SENDER) {
+                val role = vm.state.value.role
+                if (role == AppRole.SENDER) {
                     vm.verifySenderPairing()
+                }
+                if (role == AppRole.RECEIVER && vm.state.value.receiveEnabled) {
+                    ReceiveForegroundService.ensure(activity)
+                    vm.refreshFromPrefs()
                 }
             }
         }
@@ -326,8 +331,12 @@ private fun AppRoot(
             var showHistory by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) { vm.refreshPairingQr() }
             val copyOtp: (String) -> Unit = { otp ->
-                InboxNotifier.copyOtp(activity, otp)
-                Toast.makeText(activity, "OTP copied", Toast.LENGTH_SHORT).show()
+                val ok = InboxNotifier.copyOtp(activity, otp)
+                Toast.makeText(
+                    activity,
+                    if (ok) "OTP copied" else "Could not copy OTP",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
             val copyBody: (String) -> Unit = { body ->
                 val cm = activity.getSystemService(ClipboardManager::class.java)

@@ -1,11 +1,11 @@
 ﻿{
-  "versionCode": 40,
-  "versionName": "3.1.15-lan",
-  "apkAsset": "SMS-Forwarder-3.1.15-lan.apk",
+  "versionCode": 41,
+  "versionName": "3.1.16-lan",
+  "apkAsset": "SMS-Forwarder-3.1.16-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Sender: forward SMS to multiple receivers at once",
-    "Add / remove / enable devices (scan QR or enter IP)",
-    "Test send reports OK count across all enabled devices"
+    "Receiver VPN: stable listen without reopening the app",
+    "Reliable delivery: per-receiver ACK + retry up to ~3 minutes",
+    "OTP copy more reliable (store verify + UI clipboard)"
   ]
 }

@@ -112,22 +112,49 @@ object InboxNotifier {
         }
     }
 
-    fun copyOtp(context: Context, otp: String) {
-        val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
-        val clip = ClipData.newPlainText("OTP", otp)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            clip.description.extras = PersistableBundle().apply {
-                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+    /**
+     * @return true if clipboard was set; false on missing manager / OEM block.
+     */
+    fun copyOtp(context: Context, otp: String): Boolean {
+        return try {
+            val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return false
+            val clip = ClipData.newPlainText("OTP", otp)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                clip.description.extras = PersistableBundle().apply {
+                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
             }
+            clipboard.setPrimaryClip(clip)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "copyOtp failed", e)
+            false
         }
-        clipboard.setPrimaryClip(clip)
+    }
+
+    /**
+     * Ask the main app process to copy OTP (more reliable than :recv clipboard).
+     * Falls back to delayed local copy if broadcast is unavailable.
+     */
+    fun requestCopyOtp(context: Context, otp: String, delayMs: Long = 1_000L) {
+        val appCtx = context.applicationContext
+        mainHandler.postDelayed({
+            val intent = Intent(ACTION_COPY_OTP).apply {
+                setPackage(appCtx.packageName)
+                putExtra(CopyOtpReceiver.EXTRA_OTP, otp)
+                putExtra(EXTRA_SILENT, true)
+            }
+            runCatching { appCtx.sendBroadcast(intent) }
+                .onFailure { copyOtp(appCtx, otp) }
+        }, delayMs)
     }
 
     /** Store first; delay clipboard so waiting autofill can finish before any overlay. */
     fun copyOtpDelayed(context: Context, otp: String, delayMs: Long = 1_000L) {
-        val appCtx = context.applicationContext
-        mainHandler.postDelayed({ copyOtp(appCtx, otp) }, delayMs)
+        requestCopyOtp(context, otp, delayMs)
     }
 
+    const val ACTION_COPY_OTP = "com.smsforwarder.app.COPY_OTP"
+    const val EXTRA_SILENT = "silent"
     private const val TAG = "InboxNotifier"
 }

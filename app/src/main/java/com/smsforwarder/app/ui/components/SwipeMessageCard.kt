@@ -181,15 +181,17 @@ fun SwipeMessageCard(
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(msg.body, color = MaterialTheme.colorScheme.onSurface)
-                if (!msg.otp.isNullOrBlank()) {
+                val otpText = msg.otp?.takeIf { it.isNotBlank() }
+                    ?: com.smsforwarder.app.otp.OtpParser.extract(msg.body)
+                if (!otpText.isNullOrBlank()) {
                     Spacer(Modifier.height(8.dp))
                     Surface(
-                        onClick = { onCopyOtp(msg.otp) },
+                        onClick = { onCopyOtp(otpText) },
                         shape = MaterialTheme.shapes.small,
                         color = MaterialTheme.colorScheme.primaryContainer
                     ) {
                         Text(
-                            "OTP  ${msg.otp}",
+                            "OTP  $otpText",
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,

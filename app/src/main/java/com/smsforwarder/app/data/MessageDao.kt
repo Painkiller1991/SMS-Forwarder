@@ -31,6 +31,9 @@ interface MessageDao {
     @Insert
     suspend fun insert(message: MessageEntity): Long
 
+    @Query("SELECT id FROM messages WHERE msgId = :msgId LIMIT 1")
+    suspend fun findIdByMsgId(msgId: String): Long?
+
     /** Unpinned messages from today only (main inbox Clear all). */
     @Query("DELETE FROM messages WHERE pinned = 0 AND receivedAt >= :dayStart")
     suspend fun clearTodayUnpinned(dayStart: Long)

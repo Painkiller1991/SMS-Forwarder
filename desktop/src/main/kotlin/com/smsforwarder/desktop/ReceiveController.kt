@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.smsforwarder.app.net.ReceiveServer
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 
 class ReceiveController(
@@ -12,6 +13,7 @@ class ReceiveController(
     private val onMessage: (InboxMessage) -> Unit
 ) {
     private val serverRef = AtomicReference<ReceiveServer?>(null)
+    private val seenMsgIds = ConcurrentHashMap.newKeySet<String>()
 
     var listening by mutableStateOf(false)
         private set
@@ -44,9 +46,17 @@ class ReceiveController(
                 hostname = host,
                 port = prefs.port,
                 sharedSecretProvider = { prefs.sharedSecret },
-                onSms = { sender, body, timestamp ->
+                onSms = { sender, body, timestamp, msgId ->
+                    if (!msgId.isNullOrBlank() && !seenMsgIds.add(msgId)) {
+                        return@ReceiveServer "duplicate"
+                    }
+                    if (seenMsgIds.size > 500) {
+                        seenMsgIds.clear()
+                        if (!msgId.isNullOrBlank()) seenMsgIds.add(msgId)
+                    }
                     val msg = inbox.add(sender, body, timestamp)
                     onMessage(msg)
+                    "stored"
                 }
             )
             server.startListening()
