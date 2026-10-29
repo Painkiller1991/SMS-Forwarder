@@ -230,10 +230,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (enabled) verifySenderPairing()
     }
 
-    fun setReceiveEnabled(context: Context, enabled: Boolean) {
+    /**
+     * @return error message when enable is blocked (e.g. forced update), else null.
+     */
+    fun setReceiveEnabled(context: Context, enabled: Boolean): String? {
         if (enabled && UpdateLock.isActive(prefs)) {
             refreshFromPrefs()
-            return
+            return "Update required before listening"
         }
         prefs.receiveEnabled = enabled
         // #region agent log
@@ -254,6 +257,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ReceiveForegroundService.stop(context)
         }
         refreshFromPrefs()
+        return null
     }
 
     fun applyPairing(info: PairingInfo, onVerified: ((ok: Boolean, detail: String) -> Unit)? = null) {

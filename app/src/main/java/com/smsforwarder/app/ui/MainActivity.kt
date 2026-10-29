@@ -355,7 +355,10 @@ private fun AppRoot(
                     needsAutofillSetup = needsAutofillSetup,
                     onToggleReceive = { enabled ->
                         requestReceiverPermissions()
-                        vm.setReceiveEnabled(activity, enabled)
+                        val err = vm.setReceiveEnabled(activity, enabled)
+                        if (err != null) {
+                            Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
+                        }
                     },
                     onOpenAutofill = { activity.openAutofillSettings() },
                     onClearInbox = vm::clearInbox,

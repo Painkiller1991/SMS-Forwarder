@@ -1,11 +1,10 @@
 ﻿{
-  "versionCode": 37,
-  "versionName": "3.1.12-lan",
-  "apkAsset": "SMS-Forwarder-3.1.12-lan.apk",
+  "versionCode": 38,
+  "versionName": "3.1.13-lan",
+  "apkAsset": "SMS-Forwarder-3.1.13-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "History for older unpinned messages (By number / By day)",
-    "Main inbox shows pinned + today only",
-    "Swipe History: Copy, Pin to inbox, Delete"
+    "Fix receiver listen toggle / :recv crash on stop",
+    "Toast when update lock blocks listening"
   ]
 }

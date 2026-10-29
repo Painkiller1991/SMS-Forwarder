@@ -59,6 +59,10 @@ class ReceiveForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Satisfy startForegroundService contract before any early stopSelf
+        // (STOP/ENSURE-off used to crash :recv with ForegroundServiceDidNotStartInTime).
+        startForegroundNow(buildListeningNotification(listeningStatus()))
+
         // File flag is visible across UI + :recv (SharedPreferences is not)
         val listenOn = ListenFlag.read(this)
         if (UpdateLock.isActive(this)) {
@@ -414,8 +418,9 @@ class ReceiveForegroundService : Service() {
         }
 
         fun stop(context: Context) {
-            ContextCompat.startForegroundService(
-                context,
+            // Match sender: plain startService for STOP so we never require a new
+            // startForeground when the process is already shutting the listener down.
+            context.startService(
                 Intent(context, ReceiveForegroundService::class.java).apply { action = ACTION_STOP }
             )
         }
