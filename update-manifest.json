@@ -1,10 +1,11 @@
 ﻿{
-  "versionCode": 38,
-  "versionName": "3.1.13-lan",
-  "apkAsset": "SMS-Forwarder-3.1.13-lan.apk",
+  "versionCode": 40,
+  "versionName": "3.1.15-lan",
+  "apkAsset": "SMS-Forwarder-3.1.15-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Fix receiver listen toggle / :recv crash on stop",
-    "Toast when update lock blocks listening"
+    "Sender: forward SMS to multiple receivers at once",
+    "Add / remove / enable devices (scan QR or enter IP)",
+    "Test send reports OK count across all enabled devices"
   ]
 }

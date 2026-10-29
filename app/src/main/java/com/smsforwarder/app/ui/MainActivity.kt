@@ -307,6 +307,8 @@ private fun AppRoot(
                     Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
                 }
             },
+            onRemoveEndpoint = { id -> vm.removeEndpoint(id) },
+            onToggleEndpoint = { id, enabled -> vm.setEndpointEnabled(id, enabled) },
             onRequestSmsPermission = { requestSenderPermissions() },
             onTestSend = {
                 vm.testSendToReceiver { _, detail ->

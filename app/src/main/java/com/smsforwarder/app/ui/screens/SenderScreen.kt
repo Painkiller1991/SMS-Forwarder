@@ -17,12 +17,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -35,10 +37,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.smsforwarder.app.data.ReceiverEndpoint
 import com.smsforwarder.app.data.ThemeMode
 import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.ui.UiState
@@ -56,6 +60,8 @@ fun SenderScreen(
     onEnableChange: (Boolean) -> Unit,
     onScanQr: () -> Unit,
     onSaveEndpoint: (host: String, port: String, secret: String) -> Unit,
+    onRemoveEndpoint: (String) -> Unit,
+    onToggleEndpoint: (id: String, enabled: Boolean) -> Unit,
     onRequestSmsPermission: () -> Unit,
     onTestSend: () -> Unit,
     onBatteryUnrestricted: () -> Unit,
@@ -64,11 +70,9 @@ fun SenderScreen(
     onCopyDebugLog: () -> Unit,
     onChangeRole: () -> Unit
 ) {
-    var host by remember(state.receiverHost) { mutableStateOf(state.receiverHost) }
-    var port by remember(state.receiverPort) {
-        mutableStateOf(state.receiverPort.toString().ifBlank { ReceiveServer.DEFAULT_PORT.toString() })
-    }
-    var secret by remember(state.sharedSecret) { mutableStateOf(state.sharedSecret) }
+    var host by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf(ReceiveServer.DEFAULT_PORT.toString()) }
+    var secret by remember { mutableStateOf("") }
 
     AppShell(
         title = "Send mode",
@@ -90,7 +94,11 @@ fun SenderScreen(
 
             if (!hasSmsPermission) {
                 TonalCard {
-                    Text("SMS permission required", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "SMS permission required",
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = onRequestSmsPermission, modifier = Modifier.fillMaxWidth()) {
                         Text("Grant SMS permission")
@@ -100,10 +108,7 @@ fun SenderScreen(
 
             if (needsBatteryUnrestricted) {
                 TonalCard {
-                    Text(
-                        "Background battery",
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Text("Background battery", fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "Allow unrestricted battery so forwarding still works when the app is closed.",
@@ -115,7 +120,11 @@ fun SenderScreen(
                         onClick = onBatteryUnrestricted,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.BatterySaver, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Default.BatterySaver,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
                         Spacer(Modifier.width(8.dp))
                         Text("Allow unrestricted battery", modifier = Modifier.weight(1f))
                         Icon(Icons.Default.ChevronRight, contentDescription = null)
@@ -138,20 +147,18 @@ fun SenderScreen(
                 StatusChip(
                     label = when {
                         state.pairCheckInProgress -> "Checking…"
-                        !state.paired -> "Not configured"
-                        state.reachable -> "Paired"
-                        else -> "Unreachable"
+                        !state.paired -> "No devices"
+                        state.reachable -> "Reachable ${state.reachableCount}/${state.endpointCount}"
+                        else -> "Unreachable 0/${state.endpointCount}"
                     },
                     active = state.reachable
                 )
-                if (state.receiverHost.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "${state.receiverHost}:${state.receiverPort}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "SMS is sent to every enabled device on the list.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -161,8 +168,11 @@ fun SenderScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Forwarding enabled", fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (!state.paired) "Save IP + port + secret first"
-                            else "Sending to ${state.receiverHost}:${state.receiverPort}",
+                            if (!state.paired) {
+                                "Add at least one receiver first"
+                            } else {
+                                "Sending to ${state.endpointCount} device(s)"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -176,7 +186,31 @@ fun SenderScreen(
             }
 
             TonalCard {
-                SectionHeader("Endpoint", "Configure the receiving endpoint")
+                SectionHeader(
+                    "Receivers",
+                    "Up to ${ReceiverEndpoint.MAX_DEVICES} devices (phone, PC, …)"
+                )
+                Spacer(Modifier.height(12.dp))
+                if (state.endpoints.isEmpty()) {
+                    Text(
+                        "No devices yet — scan a QR or enter IP below.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    state.endpoints.forEach { ep ->
+                        EndpointRow(
+                            endpoint = ep,
+                            onToggle = { onToggleEndpoint(ep.id, it) },
+                            onRemove = { onRemoveEndpoint(ep.id) }
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+
+            TonalCard {
+                SectionHeader("Add device", "Scan QR or type IP / port / secret")
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = host,
@@ -211,16 +245,25 @@ fun SenderScreen(
                 Spacer(Modifier.height(12.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Button(
-                        onClick = { onSaveEndpoint(host, port, secret) },
+                        onClick = {
+                            onSaveEndpoint(host, port, secret)
+                            host = ""
+                            secret = ""
+                            port = ReceiveServer.DEFAULT_PORT.toString()
+                        },
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Save")
+                        Text("Add")
                     }
                     Spacer(Modifier.width(8.dp))
                     OutlinedButton(onClick = onScanQr, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Default.QrCodeScanner,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
                         Spacer(Modifier.width(8.dp))
                         Text("Scan QR")
                     }
@@ -237,12 +280,42 @@ fun SenderScreen(
             ) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Test send")
+                Text("Test send (all enabled)")
             }
             Text(
                 "If Test fails with timeout, the router may block phone‑to‑phone (AP isolation).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun EndpointRow(
+    endpoint: ReceiverEndpoint,
+    onToggle: (Boolean) -> Unit,
+    onRemove: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(endpoint.displayName, fontWeight = FontWeight.SemiBold)
+            Text(
+                "${endpoint.host}:${endpoint.port}",
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = endpoint.enabled, onCheckedChange = onToggle)
+        IconButton(onClick = onRemove) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = "Remove",
+                tint = MaterialTheme.colorScheme.error
             )
         }
     }

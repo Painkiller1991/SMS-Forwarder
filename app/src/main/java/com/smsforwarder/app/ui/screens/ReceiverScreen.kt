@@ -176,6 +176,18 @@ fun ReceiverScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    if (state.vpnActive) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            if (state.localIp.isNotBlank()) {
+                                "VPN on — listening on Wi‑Fi ${state.localIp}. If the sender still cannot reach you, exclude this app from the VPN or turn off VPN lockdown."
+                            } else {
+                                "VPN on — waiting for a Wi‑Fi address. If receive fails, exclude this app from the VPN or turn off VPN lockdown."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
                 }
                 if (!hasNotificationPermission) {
                     Spacer(Modifier.height(8.dp))

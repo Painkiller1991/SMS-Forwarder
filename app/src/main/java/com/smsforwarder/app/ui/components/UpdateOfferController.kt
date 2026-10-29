@@ -3,6 +3,7 @@ package com.smsforwarder.app.ui.components
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -14,8 +15,15 @@ class UpdateOfferController {
         private set
     var showPrompt by mutableStateOf(false)
         private set
+    /** Incremented by drawer “Check for updates”; AppUpdateHost observes. */
+    var manualCheckTick by mutableIntStateOf(0)
+        private set
 
     val isForced: Boolean get() = available?.forceUpdate == true
+
+    fun requestManualCheck() {
+        manualCheckTick += 1
+    }
 
     fun setOffer(update: AvailableUpdate) {
         available = update

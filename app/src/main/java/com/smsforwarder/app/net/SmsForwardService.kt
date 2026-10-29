@@ -15,7 +15,7 @@ import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.debug.AgentDebugLog
 import kotlin.concurrent.thread
 
-/** Short-lived FGS: POST one SMS to the paired receiver on local Wi‑Fi. */
+/** Short-lived FGS: POST one SMS to every enabled LAN receiver. */
 class SmsForwardService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -43,6 +43,7 @@ class SmsForwardService : Service() {
         val timestamp = intent?.getLongExtra(EXTRA_TIMESTAMP, System.currentTimeMillis())
             ?: System.currentTimeMillis()
         val prefs = (application as SmsForwarderApp).prefs
+        val endpoints = prefs.enabledEndpoints()
 
         thread(name = "sms-lan-forward") {
             try {
@@ -50,20 +51,18 @@ class SmsForwardService : Service() {
                 AgentDebugLog.log(
                     hypothesisId = "LAN",
                     location = "SmsForwardService.start",
-                    message = "LAN forward starting",
+                    message = "LAN fan-out starting",
                     data = mapOf(
-                        "host" to prefs.receiverHost,
-                        "port" to prefs.receiverPort,
+                        "targets" to endpoints.size,
+                        "hosts" to endpoints.joinToString { it.displayName },
                         "bodyLen" to body.length
                     ),
                     runId = "lan"
                 )
                 // #endregion
-                val result = ForwardClient.forward(
+                val result = ForwardClient.forwardToAll(
                     context = this@SmsForwardService,
-                    host = prefs.receiverHost,
-                    port = prefs.receiverPort,
-                    secret = prefs.sharedSecret,
+                    endpoints = endpoints,
                     sender = sender,
                     body = body,
                     timestamp = timestamp
@@ -72,16 +71,20 @@ class SmsForwardService : Service() {
                 AgentDebugLog.log(
                     hypothesisId = "LAN",
                     location = "SmsForwardService.result",
-                    message = "LAN forward finished",
+                    message = "LAN fan-out finished",
                     data = mapOf(
-                        "success" to result.isSuccess,
-                        "error" to result.exceptionOrNull()?.message?.take(160)
+                        "ok" to result.ok,
+                        "total" to result.total,
+                        "failures" to result.failures.joinToString()
                     ),
                     runId = "lan"
                 )
                 // #endregion
-                result.onFailure { Log.e(TAG, "LAN forward failed", it) }
-                    .onSuccess { Log.i(TAG, "Forwarded SMS from $sender") }
+                if (result.anyOk) {
+                    Log.i(TAG, "Forwarded SMS from $sender — ${result.summary()}")
+                } else {
+                    Log.e(TAG, "LAN forward failed — ${result.summary()}")
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Forward service error", e)
             } finally {

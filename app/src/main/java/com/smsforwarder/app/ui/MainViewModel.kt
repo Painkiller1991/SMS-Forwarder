@@ -8,10 +8,13 @@ import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.data.AppRole
 import com.smsforwarder.app.data.DayBoundary
 import com.smsforwarder.app.data.MessageEntity
+import com.smsforwarder.app.data.ReceiverEndpoint
 import com.smsforwarder.app.data.ThemeMode
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.net.ForwardClient
+import com.smsforwarder.app.net.IncomingSms
 import com.smsforwarder.app.net.KeepAliveScheduler
+import com.smsforwarder.app.net.LanNetwork
 import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.net.SenderKeepAliveService
@@ -34,20 +37,22 @@ data class UiState(
     val role: AppRole = AppRole.NONE,
     val senderEnabled: Boolean = false,
     val receiveEnabled: Boolean = false,
-    /** Endpoint credentials saved (durable). Not the same as live reachability. */
+    /** At least one enabled endpoint saved. */
     val paired: Boolean = false,
-    /** Live /health result for StatusChip only. */
+    /** Live /health: any enabled endpoint reachable. */
     val reachable: Boolean = false,
+    val reachableCount: Int = 0,
+    val endpointCount: Int = 0,
     val pairCheckInProgress: Boolean = false,
     val sharedSecret: String = "",
     val receiverHost: String = "",
     val receiverPort: Int = ReceiveServer.DEFAULT_PORT,
+    val endpoints: List<ReceiverEndpoint> = emptyList(),
     val pairingPayload: String = "",
     val localIp: String = "",
+    val vpnActive: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    /** Pinned + today's messages (main inbox). */
     val inboxMessages: List<MessageEntity> = emptyList(),
-    /** Older unpinned messages (History). */
     val historyMessages: List<MessageEntity> = emptyList()
 )
 
@@ -93,12 +98,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Call on resume so midnight rollover moves messages into History. */
     fun refreshDayBoundary() {
         dayStartFlow.value = DayBoundary.startOfTodayMillis()
     }
 
-    /** Refresh UI after a forced update shut down LAN features. */
     fun onForceUpdateLocked() {
         refreshFromPrefs()
     }
@@ -107,6 +110,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val ctx = getApplication<Application>()
         val ip = WifiIp.localIpv4(ctx).orEmpty()
         val payload = if (ip.isNotBlank()) prefs.pairingPayload(ip) else ""
+        val eps = prefs.endpoints
+        val enabled = prefs.enabledEndpoints()
         _state.update {
             it.copy(
                 role = prefs.role,
@@ -116,52 +121,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sharedSecret = prefs.sharedSecret,
                 receiverHost = prefs.receiverHost,
                 receiverPort = prefs.receiverPort,
+                endpoints = eps,
+                endpointCount = enabled.size,
                 pairingPayload = payload,
                 localIp = ip,
+                vpnActive = LanNetwork.vpnActive(ctx),
                 themeMode = prefs.themeMode
             )
         }
     }
 
-    /**
-     * Hits receiver `/health` for UI StatusChip only.
-     * Never stops keep-alive or clears endpoint-configured on failure.
-     */
     fun verifySenderPairing(onDone: ((ok: Boolean, detail: String) -> Unit)? = null) {
         if (prefs.role != AppRole.SENDER) {
             onDone?.invoke(false, "Not in send mode")
             return
         }
-        val host = prefs.receiverHost.trim()
-        val port = prefs.receiverPort
-        val secret = prefs.sharedSecret
-        if (host.isBlank() || secret.length < 16 || !prefs.paired) {
+        val enabled = prefs.enabledEndpoints()
+        if (enabled.isEmpty()) {
             _state.update {
-                it.copy(pairCheckInProgress = false, reachable = false, paired = false)
+                it.copy(
+                    pairCheckInProgress = false,
+                    reachable = false,
+                    reachableCount = 0,
+                    paired = false,
+                    endpointCount = 0
+                )
             }
-            onDone?.invoke(false, "Enter IP, port, and secret")
+            onDone?.invoke(false, "Add a receiver (scan QR or enter IP)")
             return
         }
         pairVerifyJob?.cancel()
         pairVerifyJob = viewModelScope.launch {
             _state.update { it.copy(pairCheckInProgress = true) }
             val result = withContext(Dispatchers.IO) {
-                ForwardClient.health(getApplication(), host, port)
+                ForwardClient.healthAll(getApplication(), enabled)
             }
-            val ok = result.isSuccess
             _state.update {
                 it.copy(
                     pairCheckInProgress = false,
-                    reachable = ok,
+                    reachable = result.anyOk,
+                    reachableCount = result.ok,
+                    endpointCount = result.total,
                     paired = prefs.endpointConfigured
                 )
             }
             onDone?.invoke(
-                ok,
-                if (ok) {
-                    "Paired — reachable at $host:$port"
+                result.anyOk,
+                if (result.anyOk) {
+                    "Reachable ${result.ok}/${result.total}"
                 } else {
-                    "Unreachable — ${result.exceptionOrNull()?.message ?: "cannot reach receiver"}"
+                    "Unreachable — ${result.failures.joinToString()}"
                 }
             )
         }
@@ -230,16 +239,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (enabled) verifySenderPairing()
     }
 
-    /**
-     * @return error message when enable is blocked (e.g. forced update), else null.
-     */
     fun setReceiveEnabled(context: Context, enabled: Boolean): String? {
         if (enabled && UpdateLock.isActive(prefs)) {
             refreshFromPrefs()
             return "Update required before listening"
         }
         prefs.receiveEnabled = enabled
-        // #region agent log
         AgentDebugLog.log(
             hypothesisId = "H_ON",
             location = "MainViewModel.setReceiveEnabled",
@@ -247,7 +252,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             data = mapOf("enabled" to enabled),
             runId = "listen-toggle"
         )
-        // #endregion
         if (enabled) {
             prefs.paired = true
             ReceiveForegroundService.start(context)
@@ -261,16 +265,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun applyPairing(info: PairingInfo, onVerified: ((ok: Boolean, detail: String) -> Unit)? = null) {
-        prefs.applyPairing(info.secret, info.host, info.port)
+        val err = prefs.upsertEndpoint(info.secret, info.host, info.port)
         refreshFromPrefs()
+        if (err != null) {
+            onVerified?.invoke(false, err)
+            return
+        }
         if (prefs.senderEnabled) startSenderKeepAlive()
         verifySenderPairing(onVerified)
     }
 
-    /**
-     * Manual IP / port / secret. Returns a sync validation error, or null if saved —
-     * then [verifySenderPairing] reports reachability via [onVerified] (UI only).
-     */
     fun saveManualEndpoint(
         host: String,
         portText: String,
@@ -283,11 +287,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (h.isBlank()) return "Enter receiver IP (shown on receiver phone)"
         if (s.length < 16) return "Secret too short — copy from receiver or scan QR"
         if (p !in 1..65535) return "Port out of range"
-        prefs.applyPairing(s, h, p)
+        val err = prefs.upsertEndpoint(s, h, p)
+        if (err != null) return err
         refreshFromPrefs()
         if (prefs.senderEnabled) startSenderKeepAlive()
         verifySenderPairing(onVerified)
         return null
+    }
+
+    fun removeEndpoint(id: String) {
+        prefs.removeEndpoint(id)
+        refreshFromPrefs()
+        if (!prefs.endpointConfigured && prefs.senderEnabled) {
+            stopSenderKeepAlive()
+            prefs.senderEnabled = false
+            refreshFromPrefs()
+        } else {
+            verifySenderPairing()
+        }
+    }
+
+    fun setEndpointEnabled(id: String, enabled: Boolean) {
+        prefs.setEndpointEnabled(id, enabled)
+        refreshFromPrefs()
+        if (!prefs.endpointConfigured && prefs.senderEnabled) {
+            stopSenderKeepAlive()
+            prefs.senderEnabled = false
+            refreshFromPrefs()
+        } else if (prefs.senderEnabled && prefs.endpointConfigured) {
+            startSenderKeepAlive()
+            verifySenderPairing()
+        }
     }
 
     fun clearInbox() {
@@ -319,42 +349,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun testSendToReceiver(onDone: (ok: Boolean, detail: String) -> Unit) {
         viewModelScope.launch {
             if (!prefs.endpointConfigured) {
-                onDone(false, "Save IP + port + secret first")
+                onDone(false, "Add a receiver first")
                 return@launch
             }
             val body = "TEST LAN — OTP 123456 — ${System.currentTimeMillis()}"
             val result = withContext(Dispatchers.IO) {
-                ForwardClient.forward(
+                ForwardClient.forwardToAll(
                     context = getApplication(),
-                    host = prefs.receiverHost,
-                    port = prefs.receiverPort,
-                    secret = prefs.sharedSecret,
+                    endpoints = prefs.enabledEndpoints(),
                     sender = "TEST",
                     body = body
                 )
             }
-            // #region agent log
             AgentDebugLog.log(
                 hypothesisId = "LAN",
                 location = "MainViewModel.testSendToReceiver",
-                message = "LAN test publish",
+                message = "LAN test fan-out",
                 data = mapOf(
-                    "success" to result.isSuccess,
-                    "host" to prefs.receiverHost,
-                    "error" to result.exceptionOrNull()?.message?.take(160)
+                    "ok" to result.ok,
+                    "total" to result.total,
+                    "failures" to result.failures.joinToString()
                 ),
                 runId = "lan"
             )
-            // #endregion
-            _state.update { it.copy(reachable = result.isSuccess) }
-            if (result.isSuccess) {
-                onDone(true, "OK — sent to ${prefs.receiverHost}:${prefs.receiverPort}")
-            } else {
-                onDone(
-                    false,
-                    "FAIL — ${result.exceptionOrNull()?.message}. Same Wi‑Fi? AP isolation off?"
+            _state.update {
+                it.copy(
+                    reachable = result.anyOk,
+                    reachableCount = result.ok,
+                    endpointCount = result.total
                 )
             }
+            onDone(result.anyOk, result.summary())
         }
     }
 
@@ -364,23 +389,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            val ip = WifiIp.localIpv4(getApplication()) ?: "127.0.0.1"
-            val body = "TEST LAN self — OTP 123456 — ${System.currentTimeMillis()}"
-            val result = withContext(Dispatchers.IO) {
-                ForwardClient.forward(
-                    context = getApplication(),
-                    host = ip,
-                    port = ReceiveServer.DEFAULT_PORT,
-                    secret = prefs.sharedSecret,
+            val body = "TEST local — OTP 123456 — ${System.currentTimeMillis()}"
+            withContext(Dispatchers.IO) {
+                IncomingSms.accept(
+                    app = app,
                     sender = "TEST",
-                    body = body
+                    body = body,
+                    timestamp = System.currentTimeMillis()
                 )
             }
-            if (result.isSuccess) {
-                onDone(true, "OK — local loopback. Check inbox.")
-            } else {
-                onDone(false, "FAIL — ${result.exceptionOrNull()?.message}")
-            }
+            onDone(true, "OK — test message injected. Check inbox + notification.")
         }
     }
 }

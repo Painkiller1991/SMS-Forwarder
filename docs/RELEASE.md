@@ -1,4 +1,4 @@
-﻿# GitHub release checklist (signed release APKs)
+# GitHub release checklist (signed release APKs)
 
 The app checks `GET /repos/Painkiller1991/SMS-Forwarder/releases/latest` on cold start.
 Ship **release-signed** APKs (not debug). Debug and release signatures differ — users on an old debug install must **uninstall once**, then install the release APK.

@@ -76,6 +76,22 @@ fun AppUpdateHost(
         }
     }
 
+    LaunchedEffect(offer.manualCheckTick) {
+        if (offer.manualCheckTick <= 0) return@LaunchedEffect
+        Toast.makeText(activity, "Checking…", Toast.LENGTH_SHORT).show()
+        UpdateLock.clearIfSatisfied(prefs)
+        val update = UpdateChecker.check(prefs.skippedUpdateVersionCode)
+        if (update != null) {
+            if (update.forceUpdate) {
+                UpdateLock.engage(activity, prefs, update.versionCode)
+                onForceLockApplied()
+            }
+            offer.setOffer(update)
+        } else {
+            Toast.makeText(activity, "You're up to date", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     val update = offer.available
     val forced = update?.forceUpdate == true
 

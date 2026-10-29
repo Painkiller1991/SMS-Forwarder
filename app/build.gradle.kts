@@ -22,8 +22,8 @@ android {
         applicationId = "com.smsforwarder.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 38
-        versionName = "3.1.13-lan"
+        versionCode = 40
+        versionName = "3.1.15-lan"
     }
 
     signingConfigs {
@@ -75,6 +75,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":shared"))
+
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")

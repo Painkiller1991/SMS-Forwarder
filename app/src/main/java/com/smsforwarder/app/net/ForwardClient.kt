@@ -1,6 +1,7 @@
 package com.smsforwarder.app.net
 
 import android.content.Context
+import com.smsforwarder.app.data.ReceiverEndpoint
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.security.Auth
 import okhttp3.MediaType.Companion.toMediaType
@@ -11,6 +12,25 @@ import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+data class FanoutResult(
+    val ok: Int,
+    val total: Int,
+    val failures: List<String>
+) {
+    val allOk: Boolean get() = total > 0 && ok == total
+    val anyOk: Boolean get() = ok > 0
+
+    fun summary(): String = when {
+        total == 0 -> "No enabled devices"
+        allOk -> "OK $ok/$total"
+        anyOk -> "Partial $ok/$total — failed: ${failures.joinToString()}"
+        else -> "FAIL 0/$total — ${failures.joinToString()}"
+    }
+}
 
 /** Local Wi‑Fi only — sockets bound to non-VPN LAN network when possible. */
 object ForwardClient {
@@ -117,6 +137,61 @@ object ForwardClient {
             Result.failure(e)
         }
     )
+
+    /**
+     * Best-effort parallel POST to every enabled endpoint.
+     * One failure does not cancel the others.
+     */
+    fun forwardToAll(
+        context: Context,
+        endpoints: List<ReceiverEndpoint>,
+        sender: String,
+        body: String,
+        timestamp: Long = System.currentTimeMillis()
+    ): FanoutResult {
+        val targets = endpoints.filter { it.enabled && it.isValid() }
+        if (targets.isEmpty()) return FanoutResult(0, 0, emptyList())
+        if (targets.size == 1) {
+            val ep = targets.first()
+            val r = forward(context, ep.host, ep.port, ep.secret, sender, body, timestamp)
+            return if (r.isSuccess) {
+                FanoutResult(1, 1, emptyList())
+            } else {
+                FanoutResult(0, 1, listOf(ep.displayName))
+            }
+        }
+        val okCount = AtomicInteger(0)
+        val failures = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val pool = Executors.newFixedThreadPool(targets.size.coerceAtMost(4))
+        try {
+            val futures = targets.map { ep ->
+                pool.submit {
+                    val r = forward(context, ep.host, ep.port, ep.secret, sender, body, timestamp)
+                    if (r.isSuccess) {
+                        okCount.incrementAndGet()
+                    } else {
+                        failures.add(ep.displayName)
+                    }
+                }
+            }
+            futures.forEach { it.get(30, TimeUnit.SECONDS) }
+        } finally {
+            pool.shutdownNow()
+        }
+        return FanoutResult(okCount.get(), targets.size, failures.toList())
+    }
+
+    fun healthAll(context: Context, endpoints: List<ReceiverEndpoint>): FanoutResult {
+        val targets = endpoints.filter { it.enabled && it.isValid() }
+        if (targets.isEmpty()) return FanoutResult(0, 0, emptyList())
+        var ok = 0
+        val failures = mutableListOf<String>()
+        for (ep in targets) {
+            if (health(context, ep.host, ep.port).isSuccess) ok++
+            else failures.add(ep.displayName)
+        }
+        return FanoutResult(ok, targets.size, failures)
+    }
 
     private fun classify(e: Throwable?): String = when (e) {
         is SocketTimeoutException -> "timeout"

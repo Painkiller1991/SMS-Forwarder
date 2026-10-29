@@ -99,6 +99,15 @@ fun AppShell(
                             }
                         )
                     }
+                    NavigationDrawerItem(
+                        icon = { Icon(Icons.Default.SystemUpdate, contentDescription = null) },
+                        label = { Text("Check for updates") },
+                        selected = false,
+                        onClick = {
+                            closeDrawer()
+                            updateOffer?.requestManualCheck()
+                        }
+                    )
                     if (pendingUpdate != null) {
                         NavigationDrawerItem(
                             icon = { Icon(Icons.Default.SystemUpdate, contentDescription = null) },

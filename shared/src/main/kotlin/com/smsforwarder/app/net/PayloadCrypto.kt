@@ -1,9 +1,9 @@
 package com.smsforwarder.app.net
 
-import android.util.Base64
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -24,11 +24,11 @@ object PayloadCrypto {
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
         val cipherBytes = cipher.doFinal(json.toString().toByteArray(Charsets.UTF_8))
         val packed = iv + cipherBytes
-        return Base64.encodeToString(packed, Base64.NO_WRAP)
+        return Base64.getEncoder().encodeToString(packed)
     }
 
     fun decryptJson(secret: String, blob: String): JSONObject {
-        val packed = Base64.decode(blob, Base64.NO_WRAP)
+        val packed = Base64.getDecoder().decode(blob)
         require(packed.size > IV_BYTES) { "ciphertext too short" }
         val iv = packed.copyOfRange(0, IV_BYTES)
         val cipherBytes = packed.copyOfRange(IV_BYTES, packed.size)

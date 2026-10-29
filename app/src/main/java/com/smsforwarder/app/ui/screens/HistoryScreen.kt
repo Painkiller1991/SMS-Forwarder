@@ -72,6 +72,7 @@ fun HistoryScreen(
     var query by remember { mutableStateOf("") }
     var expandedMessageId by remember { mutableStateOf<Long?>(null) }
     var expandedSenders by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var expandedDays by remember { mutableStateOf<Set<String>>(emptySet()) }
     var menuOpen by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -95,9 +96,13 @@ fun HistoryScreen(
             .sortedByDescending { it.second.maxOf { m -> m.receivedAt } }
     }
 
-    LaunchedEffect(filtered) {
-        if (expandedSenders.isEmpty() && filtered.isNotEmpty()) {
-            expandedSenders = setOf(filtered.first().sender)
+    LaunchedEffect(filtered, sort) {
+        if (sort == HistorySort.BY_SENDER) {
+            if (expandedSenders.isEmpty() && filtered.isNotEmpty()) {
+                expandedSenders = setOf(filtered.first().sender)
+            }
+        } else if (expandedDays.isEmpty() && dayGroups.isNotEmpty()) {
+            expandedDays = setOf(dayGroups.first().first)
         }
     }
     LaunchedEffect(listState.isScrollInProgress) {
@@ -258,28 +263,37 @@ fun HistoryScreen(
                 }
             } else {
                 dayGroups.forEach { (label, dayMsgs) ->
+                    val open = label in expandedDays
                     item(key = "day-$label") {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                        DayGroupHeader(
+                            label = label,
+                            count = dayMsgs.size,
+                            preview = dayMsgs.first().body,
+                            expanded = open,
+                            onClick = {
+                                expandedDays = if (open) {
+                                    expandedDays - label
+                                } else {
+                                    expandedDays + label
+                                }
+                            }
                         )
                     }
-                    items(dayMsgs, key = { it.id }) { msg ->
-                        HistorySwipeRow(
-                            msg = msg,
-                            showTimeOnly = false,
-                            expandedMessageId = expandedMessageId,
-                            onExpandedChange = {
-                                expandedMessageId = if (it) msg.id else null
-                            },
-                            onCopyOtp = onCopyOtp,
-                            onCopyBody = onCopyBody,
-                            onPinToInbox = onPinToInbox,
-                            onDeleteMessage = onDeleteMessage
-                        )
+                    if (open) {
+                        items(dayMsgs, key = { it.id }) { msg ->
+                            HistorySwipeRow(
+                                msg = msg,
+                                showTimeOnly = false,
+                                expandedMessageId = expandedMessageId,
+                                onExpandedChange = {
+                                    expandedMessageId = if (it) msg.id else null
+                                },
+                                onCopyOtp = onCopyOtp,
+                                onCopyBody = onCopyBody,
+                                onPinToInbox = onPinToInbox,
+                                onDeleteMessage = onDeleteMessage
+                            )
+                        }
                     }
                 }
             }
@@ -391,6 +405,61 @@ private fun SenderGroupHeader(
             Icon(
                 Icons.Default.ExpandMore,
                 contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DayGroupHeader(
+    label: String,
+    count: Int,
+    preview: String,
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    label,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    preview,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Text(
+                    "$count",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                Icons.Default.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 4.dp)
             )

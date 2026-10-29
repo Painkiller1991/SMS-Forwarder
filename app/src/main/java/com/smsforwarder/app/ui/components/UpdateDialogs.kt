@@ -1,5 +1,6 @@
 package com.smsforwarder.app.ui.components
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -103,12 +104,8 @@ fun UpdateAvailableDialog(
                 }
             }
         },
-        // Stack all actions in confirmButton — dismissButton clips a tall Column
         confirmButton = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.End
-            ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
                 Button(
                     onClick = onDownload,
                     modifier = Modifier.fillMaxWidth()
@@ -116,11 +113,18 @@ fun UpdateAvailableDialog(
                     Text("Download and install")
                 }
                 if (!forced) {
-                    TextButton(onClick = onLater) {
-                        Text("Later")
-                    }
-                    TextButton(onClick = onSkip) {
-                        Text("Skip this version")
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = onLater) {
+                            Text("Later")
+                        }
+                        TextButton(onClick = onSkip) {
+                            Text("Skip this version")
+                        }
                     }
                 }
             }

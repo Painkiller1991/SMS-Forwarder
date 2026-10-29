@@ -5,6 +5,12 @@
 .DS_Store
 /build/
 /app/build/
+/shared/build/
+/desktop/build/
+SMS-Forwarder-*.apk
+SMS-Forwarder-PC-*.exe
+SMS-Forwarder-PC-*.zip
+update-manifest.json.bak
 /captures/
 .externalNativeBuild/
 .cxx/

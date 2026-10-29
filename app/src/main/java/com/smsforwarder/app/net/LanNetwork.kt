@@ -44,6 +44,16 @@ object LanNetwork {
 
     fun ipv4(context: Context): String? = resolve(context)?.ipv4
 
+    /** True when any system VPN network is present (listen/UI guidance). */
+    fun vpnActive(context: Context): Boolean {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
+        for (network in cm.allNetworks) {
+            val caps = cm.getNetworkCapabilities(network) ?: continue
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return true
+        }
+        return false
+    }
+
     fun lanHttpClient(context: Context): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)

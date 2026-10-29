@@ -20,3 +20,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "SMS-Forwarder"
 include(":app")
+include(":shared")
+include(":desktop")
