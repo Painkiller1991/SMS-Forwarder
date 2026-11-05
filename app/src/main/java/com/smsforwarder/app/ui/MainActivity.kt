@@ -93,7 +93,7 @@ class MainActivity : ComponentActivity() {
         val prefs = (application as? SmsForwarderApp)?.prefs
         if (prefs != null && !UpdateLock.isActive(prefs)) {
             when (prefs.role) {
-                AppRole.RECEIVER -> if (prefs.receiveEnabled) {
+                AppRole.RECEIVER -> {
                     ServiceWatchdog.scheduleSoon(applicationContext)
                     runCatching { ReceiveForegroundService.ensure(applicationContext) }
                 }
@@ -229,7 +229,7 @@ private fun AppRoot(
                 if (role == AppRole.SENDER) {
                     vm.verifySenderPairing()
                 }
-                if (role == AppRole.RECEIVER && vm.state.value.receiveEnabled) {
+                if (role == AppRole.RECEIVER) {
                     ReceiveForegroundService.ensure(activity)
                     vm.refreshFromPrefs()
                 }
@@ -324,7 +324,8 @@ private fun AppRoot(
             onThemeMode = vm::setThemeMode,
             onSendDebugPing = { activity.sendDebugPing() },
             onCopyDebugLog = { activity.copyDebugLog() },
-            onChangeRole = { vm.setRole(AppRole.NONE) }
+            onChangeRole = { vm.setRole(AppRole.NONE) },
+            onDrainOutbox = { vm.drainOutbox(activity) }
         )
 
         AppRole.RECEIVER -> {

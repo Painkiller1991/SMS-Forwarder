@@ -12,12 +12,20 @@ import java.util.logging.Logger
  * Prefer binding to a LAN IPv4 (not a VPN tunnel address) when possible.
  *
  * [onSms] must persist (or dedup) before returning; status is "stored" or "duplicate".
+ * Optional [quiet] / [test] are display hints (not part of HMAC).
  */
 class ReceiveServer(
     hostname: String,
     port: Int,
     private val sharedSecretProvider: () -> String,
-    private val onSms: (sender: String, body: String, timestamp: Long, msgId: String?) -> String
+    private val onSms: (
+        sender: String,
+        body: String,
+        timestamp: Long,
+        msgId: String?,
+        quiet: Boolean,
+        test: Boolean
+    ) -> String
 ) : NanoHTTPD(hostname, port) {
 
     val bindHost: String = hostname
@@ -49,10 +57,12 @@ class ReceiveServer(
             val timestamp = json.getLong("timestamp")
             val signature = json.getString("signature")
             val msgId = json.optString("msgId").trim().ifBlank { null }
+            val quiet = json.optBoolean("quiet", false)
+            val test = json.optBoolean("test", false)
             if (!Auth.verify(secret, timestamp, sender, body, signature)) {
                 return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Unauthorized")
             }
-            val status = onSms(sender, body, timestamp, msgId).ifBlank { "stored" }
+            val status = onSms(sender, body, timestamp, msgId, quiet, test).ifBlank { "stored" }
             val ack = JSONObject()
                 .put("ok", true)
                 .put("msgId", msgId ?: JSONObject.NULL)

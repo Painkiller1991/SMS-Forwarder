@@ -29,7 +29,10 @@ data class OutboxEntity(
 ) {
     companion object {
         const val STATE_PENDING = "pending"
+        const val STATE_SYNCED = "synced"
+        /** Legacy from 3.1.16; treated as synced for purge. */
         const val STATE_DONE = "done"
+        /** Legacy from 3.1.16; treated as purgeable. */
         const val STATE_EXPIRED = "expired"
     }
 }

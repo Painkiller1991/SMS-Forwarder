@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +54,8 @@ fun AppShell(
     onCopyDebugLog: () -> Unit,
     onChangeRole: (() -> Unit)? = null,
     onOpenHistory: (() -> Unit)? = null,
+    pendingSyncCount: Int? = null,
+    onPendingSync: (() -> Unit)? = null,
     content: @Composable (PaddingValues) -> Unit
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -96,6 +99,17 @@ fun AppShell(
                             onClick = {
                                 closeDrawer()
                                 onOpenHistory()
+                            }
+                        )
+                    }
+                    if (pendingSyncCount != null && onPendingSync != null) {
+                        NavigationDrawerItem(
+                            icon = { Icon(Icons.Default.Sync, contentDescription = null) },
+                            label = { Text("Pending sync ($pendingSyncCount)") },
+                            selected = false,
+                            onClick = {
+                                closeDrawer()
+                                onPendingSync()
                             }
                         )
                     }

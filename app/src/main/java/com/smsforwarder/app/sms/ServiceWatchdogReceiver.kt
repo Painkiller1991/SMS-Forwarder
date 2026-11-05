@@ -21,12 +21,12 @@ class ServiceWatchdogReceiver : BroadcastReceiver() {
         if (UpdateLock.isActive(prefs)) return
         when (prefs.role) {
             AppRole.RECEIVER -> {
-                if (!prefs.receiveEnabled) return
                 // #region agent log
                 AgentDebugLog.log(
                     hypothesisId = "H_SWIPE",
                     location = "ServiceWatchdogReceiver",
-                    message = "Watchdog restart receive after UI close",
+                    message = "Watchdog restart receive status after UI close",
+                    data = mapOf("receiveEnabled" to prefs.receiveEnabled),
                     runId = "lan-recv"
                 )
                 // #endregion

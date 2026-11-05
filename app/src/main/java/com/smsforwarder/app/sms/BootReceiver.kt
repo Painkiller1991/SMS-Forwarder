@@ -9,6 +9,7 @@ import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.net.KeepAliveScheduler
 import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.SenderKeepAliveService
+import com.smsforwarder.app.net.SmsForwardService
 import com.smsforwarder.app.update.UpdateLock
 
 class BootReceiver : BroadcastReceiver() {
@@ -39,10 +40,14 @@ class BootReceiver : BroadcastReceiver() {
             AppRole.SENDER -> if (prefs.senderEnabled && prefs.endpointConfigured) {
                 SenderKeepAliveService.start(context)
                 KeepAliveScheduler.schedule(context)
+                SmsForwardService.drain(context)
             }
-            AppRole.RECEIVER -> if (prefs.receiveEnabled) {
+            AppRole.RECEIVER -> {
+                // Always show Receive ON/OFF status notification for receiver role.
                 ReceiveForegroundService.start(context)
-                KeepAliveScheduler.schedule(context)
+                if (prefs.receiveEnabled) {
+                    KeepAliveScheduler.schedule(context)
+                }
             }
             AppRole.NONE -> Unit
         }

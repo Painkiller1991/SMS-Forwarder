@@ -18,6 +18,7 @@ import com.smsforwarder.app.net.LanNetwork
 import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.net.SenderKeepAliveService
+import com.smsforwarder.app.net.SmsForwardService
 import com.smsforwarder.app.net.WifiIp
 import com.smsforwarder.app.pairing.PairingInfo
 import com.smsforwarder.app.update.UpdateLock
@@ -53,7 +54,9 @@ data class UiState(
     val vpnActive: Boolean = false,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val inboxMessages: List<MessageEntity> = emptyList(),
-    val historyMessages: List<MessageEntity> = emptyList()
+    val historyMessages: List<MessageEntity> = emptyList(),
+    /** Sender outbox rows still waiting for ACK. */
+    val pendingSyncCount: Int = 0
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -73,8 +76,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         refreshFromPrefs()
         if (!UpdateLock.isActive(prefs)) {
-            if (prefs.role == AppRole.RECEIVER && prefs.receiveEnabled) {
-                ReceiveForegroundService.start(application)
+            if (prefs.role == AppRole.RECEIVER) {
+                ReceiveForegroundService.ensure(application)
             }
             if (prefs.role == AppRole.SENDER && prefs.senderEnabled && prefs.endpointConfigured) {
                 startSenderKeepAlive()
@@ -96,6 +99,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        viewModelScope.launch {
+            app.database.outboxDao().observePendingCount().collect { count ->
+                _state.update { it.copy(pendingSyncCount = count) }
+            }
+        }
+    }
+
+    fun drainOutbox(context: Context) {
+        SmsForwardService.drain(context.applicationContext)
     }
 
     fun refreshDayBoundary() {
@@ -200,10 +212,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setRole(role: AppRole) {
         val ctx = getApplication<Application>()
-        if (role != AppRole.RECEIVER && prefs.receiveEnabled) {
-            ReceiveForegroundService.stop(ctx)
+        if (role != AppRole.RECEIVER && prefs.role == AppRole.RECEIVER) {
             prefs.receiveEnabled = false
             KeepAliveScheduler.cancel(ctx)
+            ReceiveForegroundService.teardown(ctx)
         }
         if (role != AppRole.SENDER) {
             if (prefs.senderEnabled) stopSenderKeepAlive()
@@ -212,6 +224,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         prefs.role = role
         if (role == AppRole.RECEIVER) {
             prefs.paired = true
+            // Always show Receive ON/OFF status notification in receiver role.
+            ReceiveForegroundService.ensure(ctx)
             refreshFromPrefs()
         } else if (role == AppRole.SENDER) {
             refreshFromPrefs()
@@ -258,6 +272,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             KeepAliveScheduler.schedule(context)
         } else {
             KeepAliveScheduler.cancel(context)
+            // Keep FGS with Receive OFF status — do not remove the notification.
             ReceiveForegroundService.stop(context)
         }
         refreshFromPrefs()
@@ -358,7 +373,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     context = getApplication(),
                     endpoints = prefs.enabledEndpoints(),
                     sender = "TEST",
-                    body = body
+                    body = body,
+                    test = true
                 )
             }
             AgentDebugLog.log(
@@ -395,10 +411,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     app = app,
                     sender = "TEST",
                     body = body,
-                    timestamp = System.currentTimeMillis()
+                    timestamp = System.currentTimeMillis(),
+                    test = true
                 )
             }
-            onDone(true, "OK — test message injected. Check inbox + notification.")
+            onDone(true, "OK — test notification only (not saved to inbox).")
         }
     }
 }

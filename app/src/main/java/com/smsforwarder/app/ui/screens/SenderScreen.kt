@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -30,6 +31,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,11 +70,48 @@ fun SenderScreen(
     onThemeMode: (ThemeMode) -> Unit,
     onSendDebugPing: () -> Unit,
     onCopyDebugLog: () -> Unit,
-    onChangeRole: () -> Unit
+    onChangeRole: () -> Unit,
+    onDrainOutbox: () -> Unit
 ) {
     var host by remember { mutableStateOf("") }
     var port by remember { mutableStateOf(ReceiveServer.DEFAULT_PORT.toString()) }
     var secret by remember { mutableStateOf("") }
+    var showPendingSync by remember { mutableStateOf(false) }
+    val pending = state.pendingSyncCount
+
+    if (showPendingSync) {
+        AlertDialog(
+            onDismissRequest = { showPendingSync = false },
+            title = { Text("Pending sync") },
+            text = {
+                Text(
+                    if (pending == 0) {
+                        "No messages waiting to send."
+                    } else if (pending == 1) {
+                        "1 message waiting to send."
+                    } else {
+                        "$pending messages waiting to send."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDrainOutbox()
+                        showPendingSync = false
+                    },
+                    enabled = pending > 0
+                ) {
+                    Text("Sync now")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPendingSync = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
 
     AppShell(
         title = "Send mode",
@@ -80,7 +119,9 @@ fun SenderScreen(
         onThemeMode = onThemeMode,
         onDebugPing = onSendDebugPing,
         onCopyDebugLog = onCopyDebugLog,
-        onChangeRole = onChangeRole
+        onChangeRole = onChangeRole,
+        pendingSyncCount = pending,
+        onPendingSync = { showPendingSync = true }
     ) { padding ->
         Column(
             modifier = Modifier

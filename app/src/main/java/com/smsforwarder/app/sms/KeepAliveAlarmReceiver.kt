@@ -30,9 +30,11 @@ class KeepAliveAlarmReceiver : BroadcastReceiver() {
         )
         // #endregion
         when (prefs.role) {
-            AppRole.RECEIVER -> if (prefs.receiveEnabled) {
+            AppRole.RECEIVER -> {
                 ReceiveForegroundService.ensure(context)
-                KeepAliveScheduler.schedule(context)
+                if (prefs.receiveEnabled) {
+                    KeepAliveScheduler.schedule(context)
+                }
             }
             AppRole.SENDER -> if (prefs.senderEnabled && prefs.endpointConfigured) {
                 SenderKeepAliveService.ensure(context)

@@ -6,9 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -21,16 +19,15 @@ import java.util.UUID
 import kotlin.concurrent.thread
 
 /**
- * Enqueues one outbox row per enabled endpoint, then drains due rows with ACK-aware
- * retries until each receiver confirms or the ~3 minute window expires.
+ * Durable per-endpoint outbox: enqueue on SMS, drain when LAN is up.
+ * Catch-up sends all older rows quiet; only the newest msgId alerts the receiver.
  */
 class SmsForwardService : Service() {
-    private val handler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startFg("Forwarding SMS (LAN)…")
+        startFg("Syncing SMS (LAN)…")
 
         when (intent?.action) {
             ACTION_DRAIN -> {
@@ -38,7 +35,6 @@ class SmsForwardService : Service() {
                     try {
                         drainOnce()
                     } finally {
-                        maybeReschedule()
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf(startId)
                     }
@@ -54,7 +50,6 @@ class SmsForwardService : Service() {
                     try {
                         enqueueAndDrain(sender, body, timestamp)
                     } finally {
-                        maybeReschedule()
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf(startId)
                     }
@@ -108,7 +103,7 @@ class SmsForwardService : Service() {
                         smsTimestamp = timestamp,
                         createdAt = now,
                         attempts = 0,
-                        nextAttemptAt = now,
+                        nextAttemptAt = 0,
                         state = OutboxEntity.STATE_PENDING
                     )
                 )
@@ -127,29 +122,27 @@ class SmsForwardService : Service() {
 
     private fun drainOnce() {
         val app = application as SmsForwarderApp
-        val now = System.currentTimeMillis()
-        val due = runBlocking { app.database.outboxDao().duePending(now) }
-        for (row in due) {
-            attempt(app, row)
+        val pending = runBlocking { app.database.outboxDao().allPendingOrdered() }
+        if (pending.isEmpty()) return
+        val newestMsgId = pending.maxWithOrNull(
+            compareBy({ it.smsTimestamp }, { it.createdAt }, { it.id })
+        )?.msgId
+        for (row in pending) {
+            val quiet = row.msgId != newestMsgId
+            val ok = attempt(app, row, quiet = quiet)
+            if (!ok) {
+                // Stop this drain; connectivity/SMS will retry. Leave remaining pending.
+                break
+            }
+            if (quiet) {
+                Thread.sleep(POST_GAP_MS)
+            }
         }
     }
 
-    private fun attempt(app: SmsForwarderApp, row: OutboxEntity) {
+    /** @return true if synced (ACK ok). */
+    private fun attempt(app: SmsForwarderApp, row: OutboxEntity, quiet: Boolean): Boolean {
         val dao = app.database.outboxDao()
-        val now = System.currentTimeMillis()
-        if (now - row.createdAt > OutboxPolicy.EXPIRE_MS) {
-            runBlocking {
-                dao.updateAttempt(
-                    id = row.id,
-                    attempts = row.attempts,
-                    nextAttemptAt = now,
-                    lastError = "expired",
-                    state = OutboxEntity.STATE_EXPIRED
-                )
-            }
-            Log.w(TAG, "Outbox expired ${row.host}:${row.port} msg=${row.msgId.take(8)}")
-            return
-        }
         val result = ForwardClient.forward(
             context = this,
             host = row.host,
@@ -158,40 +151,26 @@ class SmsForwardService : Service() {
             sender = row.sender,
             body = row.body,
             timestamp = row.smsTimestamp,
-            msgId = row.msgId
+            msgId = row.msgId,
+            quiet = quiet,
+            test = false
         )
         if (result.isSuccess) {
-            runBlocking { dao.markDone(row.id) }
-            Log.i(TAG, "ACK ok ${row.host}:${row.port}")
-            return
+            runBlocking { dao.markSynced(row.id) }
+            Log.i(TAG, "Synced ${row.host}:${row.port} quiet=$quiet")
+            return true
         }
         val attempts = row.attempts + 1
         val err = result.exceptionOrNull()?.message?.take(160)
-        val next = now + OutboxPolicy.backoffAfterAttempt(attempts)
-        val expired = next - row.createdAt > OutboxPolicy.EXPIRE_MS ||
-            now - row.createdAt > OutboxPolicy.EXPIRE_MS
-        runBlocking {
-            dao.updateAttempt(
-                id = row.id,
-                attempts = attempts,
-                nextAttemptAt = if (expired) now else next,
-                lastError = err,
-                state = if (expired) OutboxEntity.STATE_EXPIRED else OutboxEntity.STATE_PENDING
-            )
-        }
-        Log.w(TAG, "ACK fail ${row.host}:${row.port} attempt=$attempts err=$err")
-    }
-
-    private fun maybeReschedule() {
-        val app = application as SmsForwarderApp
-        val nextAt = runBlocking { app.database.outboxDao().nextPendingAt() } ?: return
-        val delay = (nextAt - System.currentTimeMillis()).coerceAtLeast(500L).coerceAtMost(60_000L)
-        handler.postDelayed({ drain(applicationContext) }, delay)
+        runBlocking { dao.markAttemptFailed(row.id, attempts, err) }
+        Log.w(TAG, "Sync fail ${row.host}:${row.port} attempt=$attempts err=$err")
+        return false
     }
 
     companion object {
         private const val TAG = "SmsForwardService"
         private const val NOTIFICATION_ID = 44
+        private const val POST_GAP_MS = 150L
         const val EXTRA_SENDER = "sender"
         const val EXTRA_BODY = "body"
         const val EXTRA_TIMESTAMP = "timestamp"

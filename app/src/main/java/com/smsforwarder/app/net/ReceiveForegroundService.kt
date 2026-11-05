@@ -37,9 +37,8 @@ import kotlinx.coroutines.sync.withLock
 import java.net.BindException
 
 /**
- * Stable LAN listener via one quiet foreground notification.
- * VPN/Wi‑Fi transitions are debounced and anti-flapped so we do not tear down
- * a working Wi‑Fi bind when [LanNetwork] briefly returns null.
+ * LAN listener with an always-visible ON/OFF foreground status notification.
+ * VPN/Wi‑Fi transitions are debounced and anti-flapped while listening.
  */
 class ReceiveForegroundService : Service() {
     private var server: ReceiveServer? = null
@@ -47,14 +46,18 @@ class ReceiveForegroundService : Service() {
     private var wifiCallback: ConnectivityManager.NetworkCallback? = null
     private var vpnCallback: ConnectivityManager.NetworkCallback? = null
     private var lastStatus: String = ""
+    private var lastTitle: String = ""
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val handler = Handler(Looper.getMainLooper())
     private val listenMutex = Mutex()
     @Volatile private var pendingUpdateUi = false
+    @Volatile private var tearingDown = false
 
     private val watchdog = object : Runnable {
         override fun run() {
-            scope.launch { ensureListeningSafe(updateUi = false) }
+            if (ListenFlag.read(this@ReceiveForegroundService)) {
+                scope.launch { ensureListeningSafe(updateUi = false) }
+            }
             handler.postDelayed(this, WATCHDOG_MS)
         }
     }
@@ -62,21 +65,25 @@ class ReceiveForegroundService : Service() {
     private val debounceEnsure = Runnable {
         val ui = pendingUpdateUi
         pendingUpdateUi = false
-        scope.launch { ensureListeningSafe(updateUi = ui) }
+        if (ListenFlag.read(this@ReceiveForegroundService)) {
+            scope.launch { ensureListeningSafe(updateUi = ui) }
+        }
     }
 
     private val bindRetry = Runnable {
-        scope.launch { ensureListeningSafe(updateUi = true) }
+        if (ListenFlag.read(this@ReceiveForegroundService)) {
+            scope.launch { ensureListeningSafe(updateUi = true) }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForegroundNow(buildListeningNotification(listeningStatus()))
-
         val listenOn = ListenFlag.read(this)
+        publishStatus(force = true)
+
         if (UpdateLock.isActive(this)) {
-            stopSelfSafely()
+            tearDownFully()
             return START_NOT_STICKY
         }
         AgentDebugLog.log(
@@ -91,35 +98,32 @@ class ReceiveForegroundService : Service() {
             runId = "listen-toggle"
         )
         when (intent?.action) {
-            ACTION_STOP -> {
-                if (listenOn) {
-                    beginListening()
-                    return START_STICKY
-                }
-                stopSelfSafely()
+            ACTION_TEARDOWN -> {
+                tearDownFully()
                 return START_NOT_STICKY
             }
-            ACTION_ENSURE -> {
-                if (!listenOn) {
-                    stopSelfSafely()
-                    return START_NOT_STICKY
+            ACTION_STOP -> {
+                // Listen OFF: keep FGS with clear OFF status (do not remove notification).
+                if (listenOn) {
+                    beginListening()
+                } else {
+                    showOffStatus()
                 }
-                beginListening()
+                return START_STICKY
+            }
+            ACTION_ENSURE -> {
+                if (listenOn) beginListening() else showOffStatus()
                 return START_STICKY
             }
             else -> {
-                if (!listenOn) {
-                    stopSelfSafely()
-                    return START_NOT_STICKY
-                }
-                beginListening()
+                if (listenOn) beginListening() else showOffStatus()
             }
         }
         return START_STICKY
     }
 
     private fun beginListening() {
-        startForegroundNow(buildListeningNotification(listeningStatus()))
+        publishStatus(force = true)
         registerNetworkCallback()
         KeepAliveScheduler.schedule(this)
         scope.launch { ensureListeningSafe(updateUi = true) }
@@ -127,25 +131,44 @@ class ReceiveForegroundService : Service() {
         handler.postDelayed(watchdog, WATCHDOG_MS)
     }
 
+    /** Port closed, but keep FGS so ON/OFF is always visible. */
+    private fun showOffStatus() {
+        handler.removeCallbacks(watchdog)
+        handler.removeCallbacks(debounceEnsure)
+        handler.removeCallbacks(bindRetry)
+        KeepAliveScheduler.cancel(this)
+        unregisterNetworkCallbacks()
+        stopLanServerQuiet()
+        publishStatus(force = true)
+    }
+
     override fun onTaskRemoved(rootIntent: Intent?) {
         AgentDebugLog.log(
             hypothesisId = "H_SWIPE",
             location = "ReceiveForegroundService.onTaskRemoved",
-            message = "UI swiped — keep :recv listener + schedule watchdog",
-            data = mapOf("serverUp" to (server != null)),
+            message = "UI swiped — keep :recv status + schedule watchdog",
+            data = mapOf("serverUp" to (server != null), "listenOn" to ListenFlag.read(this)),
             runId = "lan-recv"
         )
-        KeepAliveScheduler.schedule(this)
-        ServiceWatchdog.scheduleSoon(this)
-        scope.launch { ensureListeningSafe(updateUi = false) }
-        startForegroundNow(buildListeningNotification(listeningStatus()))
+        if (ListenFlag.read(this)) {
+            KeepAliveScheduler.schedule(this)
+            ServiceWatchdog.scheduleSoon(this)
+            scope.launch { ensureListeningSafe(updateUi = false) }
+        }
+        publishStatus(force = true)
         super.onTaskRemoved(rootIntent)
     }
 
     private fun desiredBindHost(): String =
         WifiIp.localIpv4(this) ?: ReceiveServer.BIND_ALL
 
+    private fun statusTitle(): String =
+        if (ListenFlag.read(this)) "Receive ON" else "Receive OFF"
+
     private fun listeningStatus(): String {
+        if (!ListenFlag.read(this)) {
+            return "Port closed — tap to open"
+        }
         val ip = when {
             boundHost != null && boundHost != ReceiveServer.BIND_ALL -> boundHost!!
             else -> WifiIp.localIpv4(this) ?: boundHost ?: "no-wifi"
@@ -155,11 +178,17 @@ class ReceiveForegroundService : Service() {
         return if (server != null) "Listening $ip:$port$vpn" else "Starting… $ip:$port"
     }
 
-    private fun updateListeningNotification(force: Boolean = false) {
+    private fun publishStatus(force: Boolean = false) {
+        val title = statusTitle()
         val status = listeningStatus()
-        if (!force && status == lastStatus) return
+        if (!force && title == lastTitle && status == lastStatus) return
+        lastTitle = title
         lastStatus = status
-        startForegroundNow(buildListeningNotification(status))
+        startForegroundNow(buildStatusNotification(title, status))
+    }
+
+    private fun updateListeningNotification(force: Boolean = false) {
+        publishStatus(force)
     }
 
     private fun startForegroundNow(notification: Notification) {
@@ -189,6 +218,7 @@ class ReceiveForegroundService : Service() {
     }
 
     private fun scheduleEnsure(updateUi: Boolean) {
+        if (!ListenFlag.read(this)) return
         if (updateUi) pendingUpdateUi = true
         handler.removeCallbacks(debounceEnsure)
         handler.postDelayed(debounceEnsure, NETWORK_DEBOUNCE_MS)
@@ -212,7 +242,8 @@ class ReceiveForegroundService : Service() {
                 override fun onLost(network: Network) {
                     handler.post {
                         lastStatus = "Wi‑Fi lost — will resume on reconnect"
-                        startForegroundNow(buildListeningNotification(lastStatus))
+                        lastTitle = statusTitle()
+                        startForegroundNow(buildStatusNotification(lastTitle, lastStatus))
                     }
                     scheduleEnsure(updateUi = true)
                 }
@@ -308,8 +339,8 @@ class ReceiveForegroundService : Service() {
                         sharedSecretProvider = {
                             SecretStore.read(this) ?: prefs.sharedSecret
                         },
-                        onSms = { sender, body, timestamp, msgId ->
-                            handleIncoming(app, sender, body, timestamp, msgId)
+                        onSms = { sender, body, timestamp, msgId, quiet, test ->
+                            handleIncoming(app, sender, body, timestamp, msgId, quiet, test)
                         }
                     )
                     receiveServer.startListening()
@@ -345,8 +376,9 @@ class ReceiveForegroundService : Service() {
         }
         Log.e(TAG, "LAN server start failed", lastError)
         handler.post {
+            lastTitle = "Receive ON"
             lastStatus = "FAILED: ${lastError?.message}"
-            startForegroundNow(buildListeningNotification(lastStatus))
+            startForegroundNow(buildStatusNotification(lastTitle, lastStatus))
         }
         handler.removeCallbacks(bindRetry)
         handler.postDelayed(bindRetry, BIND_FAIL_RETRY_MS)
@@ -386,11 +418,15 @@ class ReceiveForegroundService : Service() {
         sender: String,
         body: String,
         timestamp: Long,
-        msgId: String?
+        msgId: String?,
+        quiet: Boolean,
+        test: Boolean
     ): String {
         var status = "stored"
         withBriefWake {
-            status = IncomingSms.acceptBlocking(app, sender, body, timestamp, msgId)
+            status = IncomingSms.acceptBlocking(
+                app, sender, body, timestamp, msgId, quiet = quiet, test = test
+            )
             handler.post { updateListeningNotification(force = true) }
         }
         return status
@@ -406,10 +442,10 @@ class ReceiveForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-    private fun buildListeningNotification(status: String): Notification {
+    private fun buildStatusNotification(title: String, status: String): Notification {
         return NotificationCompat.Builder(this, SmsForwarderApp.CHANNEL_RECEIVE)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("SMS receive (local Wi‑Fi)")
+            .setContentTitle(title)
             .setContentText(status)
             .setOngoing(true)
             .setContentIntent(openAppIntent())
@@ -420,7 +456,8 @@ class ReceiveForegroundService : Service() {
             .build()
     }
 
-    private fun stopSelfSafely() {
+    private fun tearDownFully() {
+        tearingDown = true
         handler.removeCallbacks(watchdog)
         handler.removeCallbacks(debounceEnsure)
         handler.removeCallbacks(bindRetry)
@@ -438,8 +475,15 @@ class ReceiveForegroundService : Service() {
         unregisterNetworkCallbacks()
         stopLanServerQuiet()
         scope.cancel()
-        if (ListenFlag.read(applicationContext)) {
-            KeepAliveScheduler.schedule(applicationContext)
+        // Restart status FGS for receiver role so ON/OFF stays visible (not after teardown).
+        val app = applicationContext as? SmsForwarderApp
+        if (!tearingDown &&
+            app != null &&
+            app.prefs.role == com.smsforwarder.app.data.AppRole.RECEIVER
+        ) {
+            if (ListenFlag.read(applicationContext)) {
+                KeepAliveScheduler.schedule(applicationContext)
+            }
             ensure(applicationContext)
         }
         super.onDestroy()
@@ -455,6 +499,7 @@ class ReceiveForegroundService : Service() {
         private const val BIND_FAIL_RETRY_MS = 2_000L
         const val ACTION_STOP = "com.smsforwarder.app.STOP_RECEIVE"
         const val ACTION_ENSURE = "com.smsforwarder.app.ENSURE_RECEIVE"
+        const val ACTION_TEARDOWN = "com.smsforwarder.app.TEARDOWN_RECEIVE"
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(
@@ -472,9 +517,21 @@ class ReceiveForegroundService : Service() {
             )
         }
 
+        /** Listen OFF — keep ongoing Receive OFF notification. */
         fun stop(context: Context) {
-            context.startService(
+            ContextCompat.startForegroundService(
+                context,
                 Intent(context, ReceiveForegroundService::class.java).apply { action = ACTION_STOP }
+            )
+        }
+
+        /** Leave receiver role — remove status notification entirely. */
+        fun teardown(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, ReceiveForegroundService::class.java).apply {
+                    action = ACTION_TEARDOWN
+                }
             )
         }
     }

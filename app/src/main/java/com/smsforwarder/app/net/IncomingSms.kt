@@ -10,10 +10,20 @@ import kotlinx.coroutines.runBlocking
 
 /**
  * Shared inbox + notification path for LAN [ReceiveServer] and receiver Test inject.
- * [acceptBlocking] persists before returning so HTTP ACK is durable.
+ * [acceptBlocking] persists before returning so HTTP ACK is durable (except tests).
  */
 object IncomingSms {
     private const val TAG = "IncomingSms"
+
+    fun isTestMessage(sender: String, body: String, testFlag: Boolean): Boolean {
+        if (testFlag) return true
+        if (sender.trim().equals("TEST", ignoreCase = true)) return true
+        val b = body.trimStart()
+        return b.startsWith("TEST ", ignoreCase = true) ||
+            b.startsWith("TEST\n", ignoreCase = true) ||
+            b.startsWith("TEST LAN", ignoreCase = true) ||
+            b.startsWith("TEST local", ignoreCase = true)
+    }
 
     /** Blocking persist for ReceiveServer ACK. Returns "stored" or "duplicate". */
     fun acceptBlocking(
@@ -21,11 +31,14 @@ object IncomingSms {
         sender: String,
         body: String,
         timestamp: Long = System.currentTimeMillis(),
-        msgId: String? = null
+        msgId: String? = null,
+        quiet: Boolean = false,
+        test: Boolean = false
     ): String {
         return runBlocking {
+            val isTest = isTestMessage(sender, body, test)
             val dao = app.database.messageDao()
-            if (!msgId.isNullOrBlank()) {
+            if (!isTest && !msgId.isNullOrBlank()) {
                 val existing = dao.findIdByMsgId(msgId)
                 if (existing != null) {
                     AgentDebugLog.log(
@@ -38,13 +51,30 @@ object IncomingSms {
                     return@runBlocking "duplicate"
                 }
             }
+            if (isTest) {
+                AgentDebugLog.log(
+                    hypothesisId = "NOTIF",
+                    location = "IncomingSms.acceptBlocking",
+                    message = "Test message — notify only, no inbox insert",
+                    data = mapOf("sender" to sender.take(32), "quiet" to quiet),
+                    runId = "lan-calm"
+                )
+                // Prove the pipe without polluting inbox / OTP autofill.
+                if (!quiet) {
+                    InboxNotifier.show(app, sender, body, otp = null)
+                }
+                return@runBlocking "stored"
+            }
+
             val otp = OtpParser.extract(body)
             if (otp != null) {
                 val wrote = app.otpStore.putVerified(otp, sender)
                 if (!wrote) {
                     Log.w(TAG, "OtpStore write verify failed")
                 }
-                InboxNotifier.requestCopyOtp(app, otp)
+                if (!quiet) {
+                    InboxNotifier.requestCopyOtp(app, otp)
+                }
             }
             dao.insert(
                 MessageEntity(
@@ -62,11 +92,14 @@ object IncomingSms {
                 data = mapOf(
                     "sender" to sender.take(32),
                     "bodyLen" to body.length,
-                    "msgId" to (msgId?.take(36) ?: "none")
+                    "msgId" to (msgId?.take(36) ?: "none"),
+                    "quiet" to quiet
                 ),
                 runId = "lan-calm"
             )
-            InboxNotifier.show(app, sender, body, otp)
+            if (!quiet) {
+                InboxNotifier.show(app, sender, body, otp)
+            }
             "stored"
         }
     }
@@ -77,8 +110,10 @@ object IncomingSms {
         sender: String,
         body: String,
         timestamp: Long = System.currentTimeMillis(),
-        msgId: String? = null
+        msgId: String? = null,
+        quiet: Boolean = false,
+        test: Boolean = false
     ) {
-        acceptBlocking(app, sender, body, timestamp, msgId)
+        acceptBlocking(app, sender, body, timestamp, msgId, quiet, test)
     }
 }

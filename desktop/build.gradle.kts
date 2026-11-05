@@ -24,7 +24,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Exe)
             packageName = "SMS-Forwarder-PC"
-            packageVersion = "1.0.1"
+            packageVersion = "1.0.2"
             description = "LAN SMS receiver for Windows (pairs with Android sender)"
             copyright = "SMS Forwarder"
             vendor = "SMS Forwarder"

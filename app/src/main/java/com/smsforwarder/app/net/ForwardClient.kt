@@ -54,7 +54,9 @@ object ForwardClient {
         sender: String,
         body: String,
         timestamp: Long = System.currentTimeMillis(),
-        msgId: String = UUID.randomUUID().toString()
+        msgId: String = UUID.randomUUID().toString(),
+        quiet: Boolean = false,
+        test: Boolean = false
     ): Result<Unit> = runCatching {
         require(host.isNotBlank()) { "Receiver host not set — scan QR again" }
         val client = LanNetwork.lanHttpClient(context)
@@ -99,6 +101,8 @@ object ForwardClient {
             .put("timestamp", timestamp)
             .put("signature", signature)
             .put("msgId", msgId)
+            .put("quiet", quiet)
+            .put("test", test)
         val blob = PayloadCrypto.encryptJson(secret, json)
         val request = Request.Builder()
             .url(url)
@@ -155,13 +159,18 @@ object ForwardClient {
         sender: String,
         body: String,
         timestamp: Long = System.currentTimeMillis(),
-        msgId: String = UUID.randomUUID().toString()
+        msgId: String = UUID.randomUUID().toString(),
+        quiet: Boolean = false,
+        test: Boolean = false
     ): FanoutResult {
         val targets = endpoints.filter { it.enabled && it.isValid() }
         if (targets.isEmpty()) return FanoutResult(0, 0, emptyList())
         if (targets.size == 1) {
             val ep = targets.first()
-            val r = forward(context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId)
+            val r = forward(
+                context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId,
+                quiet = quiet, test = test
+            )
             return if (r.isSuccess) {
                 FanoutResult(1, 1, emptyList())
             } else {
@@ -175,7 +184,8 @@ object ForwardClient {
             val futures = targets.map { ep ->
                 pool.submit {
                     val r = forward(
-                        context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId
+                        context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId,
+                        quiet = quiet, test = test
                     )
                     if (r.isSuccess) okCount.incrementAndGet()
                     else failures.add(ep.displayName)

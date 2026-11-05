@@ -46,7 +46,7 @@ class ReceiveController(
                 hostname = host,
                 port = prefs.port,
                 sharedSecretProvider = { prefs.sharedSecret },
-                onSms = { sender, body, timestamp, msgId ->
+                onSms = { sender, body, timestamp, msgId, quiet, test ->
                     if (!msgId.isNullOrBlank() && !seenMsgIds.add(msgId)) {
                         return@ReceiveServer "duplicate"
                     }
@@ -54,8 +54,16 @@ class ReceiveController(
                         seenMsgIds.clear()
                         if (!msgId.isNullOrBlank()) seenMsgIds.add(msgId)
                     }
+                    // Test traffic: ACK only — never inbox / tray spam.
+                    if (test || sender.trim().equals("TEST", ignoreCase = true) ||
+                        body.trimStart().startsWith("TEST", ignoreCase = true)
+                    ) {
+                        return@ReceiveServer "stored"
+                    }
                     val msg = inbox.add(sender, body, timestamp)
-                    onMessage(msg)
+                    if (!quiet) {
+                        onMessage(msg)
+                    }
                     "stored"
                 }
             )
