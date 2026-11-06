@@ -168,18 +168,28 @@ class MainActivity : ComponentActivity() {
     fun copyDebugLog() {
         val text = AgentDebugLog.readAll(this)
         if (text.isBlank()) {
-            Toast.makeText(this, "No debug log yet — use menu → Write debug ping first", Toast.LENGTH_SHORT)
-                .show()
+            Toast.makeText(
+                this,
+                "No debug log yet — toggle listen / Sync now, then Copy again",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
         val cm = getSystemService(ClipboardManager::class.java)
         cm.setPrimaryClip(ClipData.newPlainText("debug-log", text))
         Toast.makeText(
             this,
-            "Debug log copied (${text.lines().size} lines) — paste in chat",
+            "Debug log copied (${text.lines().count { it.isNotBlank() }} lines) — paste in chat",
             Toast.LENGTH_LONG
         ).show()
     }
+
+    fun clearDebugLog() {
+        AgentDebugLog.clear(this)
+        Toast.makeText(this, "Debug log cleared", Toast.LENGTH_SHORT).show()
+    }
+
+    fun readDebugLogText(): String = AgentDebugLog.readAll(this)
 
     fun requestBatteryUnrestricted() {
         val pm = getSystemService(PowerManager::class.java)
@@ -277,6 +287,8 @@ private fun AppRoot(
             onThemeMode = vm::setThemeMode,
             onDebugPing = { activity.sendDebugPing() },
             onCopyDebugLog = { activity.copyDebugLog() },
+            onClearDebugLog = { activity.clearDebugLog() },
+            readDebugLog = { activity.readDebugLogText() },
             onChooseSender = {
                 requestSenderPermissions()
                 vm.setRole(AppRole.SENDER)
@@ -324,6 +336,8 @@ private fun AppRoot(
             onThemeMode = vm::setThemeMode,
             onSendDebugPing = { activity.sendDebugPing() },
             onCopyDebugLog = { activity.copyDebugLog() },
+            onClearDebugLog = { activity.clearDebugLog() },
+            readDebugLog = { activity.readDebugLogText() },
             onChangeRole = { vm.setRole(AppRole.NONE) },
             onDrainOutbox = { vm.drainOutbox(activity) }
         )
@@ -404,6 +418,8 @@ private fun AppRoot(
                     onThemeMode = vm::setThemeMode,
                     onSendDebugPing = { activity.sendDebugPing() },
                     onCopyDebugLog = { activity.copyDebugLog() },
+                    onClearDebugLog = { activity.clearDebugLog() },
+                    readDebugLog = { activity.readDebugLogText() },
                     onChangeRole = { vm.setRole(AppRole.NONE) }
                 )
             }

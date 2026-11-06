@@ -47,6 +47,8 @@ fun RolePickerScreen(
     onThemeMode: (ThemeMode) -> Unit,
     onDebugPing: () -> Unit,
     onCopyDebugLog: () -> Unit,
+    onClearDebugLog: () -> Unit,
+    readDebugLog: () -> String,
     onChooseSender: () -> Unit,
     onChooseReceiver: () -> Unit
 ) {
@@ -64,6 +66,8 @@ fun RolePickerScreen(
         onThemeMode = onThemeMode,
         onDebugPing = onDebugPing,
         onCopyDebugLog = onCopyDebugLog,
+        onClearDebugLog = onClearDebugLog,
+        readDebugLog = readDebugLog,
         onChangeRole = null
     ) { padding ->
         Column(

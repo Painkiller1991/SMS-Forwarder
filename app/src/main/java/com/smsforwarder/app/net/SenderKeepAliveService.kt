@@ -75,12 +75,29 @@ class SenderKeepAliveService : Service() {
     private fun maybeDrainPending() {
         val app = application as? SmsForwarderApp ?: return
         val pending = runBlocking { app.database.outboxDao().pendingCount() }
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H4",
+            location = "SenderKeepAliveService.maybeDrainPending",
+            message = "KeepAlive maybe drain",
+            data = mapOf("pending" to pending),
+            runId = "sync-debug"
+        )
+        // #endregion
         if (pending > 0) {
             SmsForwardService.drain(this)
         }
     }
 
     private fun scheduleDrain() {
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H4",
+            location = "SenderKeepAliveService.scheduleDrain",
+            message = "LAN network event → schedule drain",
+            runId = "sync-debug"
+        )
+        // #endregion
         handler.removeCallbacks(debounceDrain)
         handler.postDelayed(debounceDrain, DRAIN_DEBOUNCE_MS)
     }

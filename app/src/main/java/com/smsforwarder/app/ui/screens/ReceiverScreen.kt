@@ -81,6 +81,8 @@ fun ReceiverScreen(
     onThemeMode: (ThemeMode) -> Unit,
     onSendDebugPing: () -> Unit,
     onCopyDebugLog: () -> Unit,
+    onClearDebugLog: () -> Unit,
+    readDebugLog: () -> String,
     onChangeRole: () -> Unit
 ) {
     val qrBitmap: Bitmap? = remember(state.pairingPayload) {
@@ -104,6 +106,8 @@ fun ReceiverScreen(
         onThemeMode = onThemeMode,
         onDebugPing = onSendDebugPing,
         onCopyDebugLog = onCopyDebugLog,
+        onClearDebugLog = onClearDebugLog,
+        readDebugLog = readDebugLog,
         onChangeRole = onChangeRole,
         onOpenHistory = onOpenHistory
     ) { padding ->

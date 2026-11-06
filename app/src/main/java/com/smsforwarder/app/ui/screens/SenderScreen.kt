@@ -70,6 +70,8 @@ fun SenderScreen(
     onThemeMode: (ThemeMode) -> Unit,
     onSendDebugPing: () -> Unit,
     onCopyDebugLog: () -> Unit,
+    onClearDebugLog: () -> Unit,
+    readDebugLog: () -> String,
     onChangeRole: () -> Unit,
     onDrainOutbox: () -> Unit
 ) {
@@ -119,6 +121,8 @@ fun SenderScreen(
         onThemeMode = onThemeMode,
         onDebugPing = onSendDebugPing,
         onCopyDebugLog = onCopyDebugLog,
+        onClearDebugLog = onClearDebugLog,
+        readDebugLog = readDebugLog,
         onChangeRole = onChangeRole,
         pendingSyncCount = pending,
         onPendingSync = { showPendingSync = true }

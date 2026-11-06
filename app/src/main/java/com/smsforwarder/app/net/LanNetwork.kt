@@ -5,11 +5,13 @@ import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
+import com.smsforwarder.app.debug.AgentDebugLog
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Picks the underlying Wi‑Fi/Ethernet [Network] that is not the VPN tunnel,
@@ -21,25 +23,65 @@ object LanNetwork {
         val ipv4: String
     )
 
+    private val lastLoggedKey = AtomicReference("")
+
     fun resolve(context: Context): LanPath? {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
         var fallback: LanPath? = null
+        var wifiCount = 0
         for (network in cm.allNetworks) {
             val caps = cm.getNetworkCapabilities(network) ?: continue
             val wifiOrEth =
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
                     caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
             if (!wifiOrEth) continue
+            wifiCount++
             if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
 
             val ip = ipv4On(cm, network) ?: continue
             val path = LanPath(network, ip)
             if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) {
+                logResolveOnce(context, path.ipv4, wifiCount, vpnActive(context), "not_vpn")
                 return path
             }
             if (fallback == null) fallback = path
         }
+        logResolveOnce(
+            context,
+            fallback?.ipv4 ?: "null",
+            wifiCount,
+            vpnActive(context),
+            if (fallback != null) "fallback" else "none"
+        )
         return fallback
+    }
+
+    private fun logResolveOnce(
+        context: Context,
+        ip: String,
+        wifiCount: Int,
+        vpn: Boolean,
+        mode: String
+    ) {
+        val key = "$ip|$wifiCount|$vpn|$mode"
+        val prev = lastLoggedKey.get()
+        if (prev == key) return
+        lastLoggedKey.set(key)
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H7",
+            location = "LanNetwork.resolve",
+            message = "LAN path resolve",
+            data = mapOf(
+                "ip" to ip,
+                "wifiCount" to wifiCount,
+                "vpn" to vpn,
+                "mode" to mode,
+                "pid" to android.os.Process.myPid()
+            ),
+            runId = "sync-debug"
+        )
+        // #endregion
     }
 
     fun ipv4(context: Context): String? = resolve(context)?.ipv4

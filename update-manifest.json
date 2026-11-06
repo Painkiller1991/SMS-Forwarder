@@ -1,13 +1,11 @@
 ﻿{
-  "versionCode": 42,
-  "versionName": "3.1.17-lan",
-  "apkAsset": "SMS-Forwarder-3.1.17-lan.apk",
+  "versionCode": 43,
+  "versionName": "3.1.18-lan",
+  "apkAsset": "SMS-Forwarder-3.1.18-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Sender sync queue: keep pending until ACK; drain when Wi‑Fi is back",
-    "Catch-up quiet: only the newest SMS alerts on the receiver",
-    "Receive ON/OFF always shown in the status notification",
-    "Test messages never save to the inbox",
-    "Sender menu: Pending sync count + Sync now"
+    "Menu: Show / Copy / Clear debug log (easier troubleshooting)",
+    "Debug logging for sync, VPN/LAN path, and Receive ON/OFF status",
+    "Includes 3.1.17 sync + quiet catch-up + receive status work"
   ]
 }

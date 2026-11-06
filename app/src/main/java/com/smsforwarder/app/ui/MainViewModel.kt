@@ -107,6 +107,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun drainOutbox(context: Context) {
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H2",
+            location = "MainViewModel.drainOutbox",
+            message = "Sync now tapped",
+            data = mapOf("pendingSyncCount" to _state.value.pendingSyncCount),
+            runId = "sync-debug"
+        )
+        // #endregion
         SmsForwardService.drain(context.applicationContext)
     }
 
@@ -259,13 +268,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return "Update required before listening"
         }
         prefs.receiveEnabled = enabled
+        // #region agent log
         AgentDebugLog.log(
-            hypothesisId = "H_ON",
+            hypothesisId = "H6",
             location = "MainViewModel.setReceiveEnabled",
             message = "Listening port toggled",
-            data = mapOf("enabled" to enabled),
-            runId = "listen-toggle"
+            data = mapOf(
+                "enabled" to enabled,
+                "listenFlag" to com.smsforwarder.app.data.ListenFlag.read(context),
+                "role" to prefs.role.name,
+                "vpn" to LanNetwork.vpnActive(context),
+                "lanIp" to (LanNetwork.ipv4(context) ?: "null")
+            ),
+            runId = "sync-debug"
         )
+        // #endregion
         if (enabled) {
             prefs.paired = true
             ReceiveForegroundService.start(context)

@@ -86,17 +86,25 @@ class ReceiveForegroundService : Service() {
             tearDownFully()
             return START_NOT_STICKY
         }
+        // #region agent log
+        val lan = LanNetwork.resolve(this)
         AgentDebugLog.log(
-            hypothesisId = "H_ON",
+            hypothesisId = "H6",
             location = "ReceiveForegroundService.onStartCommand",
             message = "Service start command",
             data = mapOf(
                 "action" to (intent?.action ?: "START"),
                 "listenOn" to listenOn,
-                "serverUp" to (server != null)
+                "serverUp" to (server != null),
+                "vpn" to LanNetwork.vpnActive(this),
+                "lanIp" to (lan?.ipv4 ?: "null"),
+                "title" to statusTitle(),
+                "statusText" to listeningStatus(),
+                "pid" to android.os.Process.myPid()
             ),
-            runId = "listen-toggle"
+            runId = "sync-debug"
         )
+        // #endregion
         when (intent?.action) {
             ACTION_TEARDOWN -> {
                 tearDownFully()
