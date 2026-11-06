@@ -19,9 +19,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.smsforwarder.app.BuildConfig
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.update.ApkInstaller
 import com.smsforwarder.app.update.AvailableUpdate
+import com.smsforwarder.app.update.UpdateCheckResult
 import com.smsforwarder.app.update.UpdateChecker
 import com.smsforwarder.app.update.UpdateDownloader
 import com.smsforwarder.app.update.UpdateLock
@@ -66,13 +68,16 @@ fun AppUpdateHost(
 
     LaunchedEffect(Unit) {
         UpdateLock.clearIfSatisfied(prefs)
-        val update = UpdateChecker.check(prefs.skippedUpdateVersionCode)
-        if (update != null) {
-            if (update.forceUpdate) {
-                UpdateLock.engage(activity, prefs, update.versionCode)
-                onForceLockApplied()
+        when (val result = UpdateChecker.check(prefs.skippedUpdateVersionCode)) {
+            is UpdateCheckResult.Available -> {
+                val update = result.update
+                if (update.forceUpdate) {
+                    UpdateLock.engage(activity, prefs, update.versionCode)
+                    onForceLockApplied()
+                }
+                offer.setOffer(update)
             }
-            offer.setOffer(update)
+            is UpdateCheckResult.UpToDate, is UpdateCheckResult.Failed -> Unit
         }
     }
 
@@ -80,15 +85,29 @@ fun AppUpdateHost(
         if (offer.manualCheckTick <= 0) return@LaunchedEffect
         Toast.makeText(activity, "Checking…", Toast.LENGTH_SHORT).show()
         UpdateLock.clearIfSatisfied(prefs)
-        val update = UpdateChecker.check(prefs.skippedUpdateVersionCode)
-        if (update != null) {
-            if (update.forceUpdate) {
-                UpdateLock.engage(activity, prefs, update.versionCode)
-                onForceLockApplied()
+        when (val result = UpdateChecker.check(prefs.skippedUpdateVersionCode)) {
+            is UpdateCheckResult.Available -> {
+                val update = result.update
+                if (update.forceUpdate) {
+                    UpdateLock.engage(activity, prefs, update.versionCode)
+                    onForceLockApplied()
+                }
+                offer.setOffer(update)
             }
-            offer.setOffer(update)
-        } else {
-            Toast.makeText(activity, "You're up to date", Toast.LENGTH_SHORT).show()
+            is UpdateCheckResult.UpToDate -> {
+                Toast.makeText(
+                    activity,
+                    "You're up to date (v${BuildConfig.VERSION_NAME})",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            is UpdateCheckResult.Failed -> {
+                Toast.makeText(
+                    activity,
+                    "Update check failed: ${result.reason}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 

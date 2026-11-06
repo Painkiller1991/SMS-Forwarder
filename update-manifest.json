@@ -1,11 +1,11 @@
 ﻿{
-  "versionCode": 44,
-  "versionName": "3.1.19-lan",
-  "apkAsset": "SMS-Forwarder-3.1.19-lan.apk",
+  "versionCode": 45,
+  "versionName": "3.1.20-lan",
+  "apkAsset": "SMS-Forwarder-3.1.20-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Fix pending sync: old outbox SMS no longer fail Auth (401 Unauthorized)",
-    "Outbox signs with current time; original SMS time kept for inbox",
-    "Update both sender and receiver"
+    "Fix false You're up to date when update check fails",
+    "More reliable update check (direct GitHub download, not only API)",
+    "Includes sync 401 fix from 3.1.19 — install on sender and receiver"
   ]
 }
