@@ -2,6 +2,10 @@ package com.smsforwarder.app.ui
 
 import android.app.Application
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.smsforwarder.app.SmsForwarderApp
@@ -17,6 +21,7 @@ import com.smsforwarder.app.net.ForwardClient
 import com.smsforwarder.app.net.IncomingSms
 import com.smsforwarder.app.net.KeepAliveScheduler
 import com.smsforwarder.app.net.LanNetwork
+import com.smsforwarder.app.net.LocalOnlyHotspotController
 import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.net.SenderKeepAliveService
@@ -66,7 +71,13 @@ data class UiState(
     val historyMessages: List<MessageEntity> = emptyList(),
     /** Sender outbox rows still waiting for ACK. */
     val pendingSyncCount: Int = 0,
-    val batteryBannerSnoozed: Boolean = false
+    val batteryBannerSnoozed: Boolean = false,
+    val hotspotActive: Boolean = false,
+    val hotspotSsid: String = "",
+    val hotspotPassword: String = "",
+    val hotspotError: String? = null,
+    /** True when local IP looks like a phone Soft AP / hotspot LAN. */
+    val onHotspotLan: Boolean = false
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -75,11 +86,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = app.prefs
     private var pairVerifyJob: Job? = null
     private val dayStartFlow = MutableStateFlow(DayBoundary.startOfTodayMillis())
+    private val hotspot = LocalOnlyHotspotController(application)
+    private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
+        registerWifiIdentityCallback()
         UpdateLock.clearIfSatisfied(prefs)
         if (UpdateLock.isActive(prefs)) {
             UpdateLock.engage(application, prefs, prefs.updateLockedVersionCode)
@@ -171,9 +185,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 localIp = ip,
                 vpnActive = LanNetwork.vpnActive(ctx),
                 themeMode = prefs.themeMode,
-                batteryBannerSnoozed = prefs.isBatteryBannerSnoozed()
+                batteryBannerSnoozed = prefs.isBatteryBannerSnoozed(),
+                hotspotActive = hotspot.active,
+                hotspotSsid = hotspot.ssid,
+                hotspotPassword = hotspot.password,
+                hotspotError = hotspot.lastError,
+                onHotspotLan = LanNetwork.isLikelyHotspotSubnet(ip) ||
+                    (ip.isNotBlank() && LanNetwork.isPrivateLanIpv4(ip) && hotspot.active)
             )
         }
+    }
+
+    fun publishHotspotState() {
+        _state.update {
+            it.copy(
+                hotspotActive = hotspot.active,
+                hotspotSsid = hotspot.ssid,
+                hotspotPassword = hotspot.password,
+                hotspotError = hotspot.lastError
+            )
+        }
+        refreshFromPrefs()
+    }
+
+    fun startLocalHotspot() {
+        hotspot.start { publishHotspotState() }
+    }
+
+    fun stopLocalHotspot() {
+        hotspot.stop { publishHotspotState() }
+    }
+
+    fun openSystemHotspotSettings(context: Context) {
+        hotspot.openSystemHotspotSettings(context)
     }
 
     fun setReceiverExtraSecret(extra: String, confirm: String): String? {
@@ -325,6 +369,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshFromPrefs()
     }
 
+    /** Call when Wi‑Fi / hotspot membership may have changed (receiver IP in QR). */
+    fun refreshNetworkIdentity() {
+        refreshFromPrefs()
+        if (prefs.role == AppRole.SENDER && prefs.endpointConfigured) {
+            verifySenderPairing()
+        }
+    }
+
+    private fun registerWifiIdentityCallback() {
+        val cm = getApplication<Application>().getSystemService(ConnectivityManager::class.java) ?: return
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                refreshNetworkIdentity()
+            }
+
+            override fun onLost(network: Network) {
+                refreshNetworkIdentity()
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                refreshNetworkIdentity()
+            }
+        }
+        wifiNetworkCallback = cb
+        val req = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+        runCatching { cm.registerNetworkCallback(req, cb) }
+    }
+
+    override fun onCleared() {
+        hotspot.stop {}
+        val cm = getApplication<Application>().getSystemService(ConnectivityManager::class.java)
+        wifiNetworkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
+        wifiNetworkCallback = null
+        super.onCleared()
+    }
+
     fun setRole(role: AppRole) {
         val ctx = getApplication<Application>()
         if (role != AppRole.RECEIVER && prefs.role == AppRole.RECEIVER) {
@@ -335,6 +417,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (role != AppRole.SENDER) {
             if (prefs.senderEnabled) stopSenderKeepAlive()
             prefs.senderEnabled = false
+            hotspot.stop { publishHotspotState() }
         }
         prefs.role = role
         if (role == AppRole.RECEIVER) {

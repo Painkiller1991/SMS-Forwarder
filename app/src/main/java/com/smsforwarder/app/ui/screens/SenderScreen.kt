@@ -61,6 +61,7 @@ import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.tile.QsTileHelper
 import com.smsforwarder.app.ui.UiState
 import com.smsforwarder.app.ui.components.AppShell
+import com.smsforwarder.app.ui.components.HotspotGuideCard
 import com.smsforwarder.app.ui.components.SectionHeader
 import com.smsforwarder.app.ui.components.StatusChip
 import com.smsforwarder.app.ui.components.TonalCard
@@ -90,7 +91,11 @@ fun SenderScreen(
     onClearDebugLog: () -> Unit,
     readDebugLog: () -> String,
     onChangeRole: () -> Unit,
-    onDrainOutbox: () -> Unit
+    onDrainOutbox: () -> Unit,
+    onStartHotspot: () -> Unit,
+    onStopHotspot: () -> Unit,
+    onOpenSystemHotspot: () -> Unit,
+    onCopyHotspotCredentials: (String) -> Unit
 ) {
     val context = LocalContext.current
     var host by remember { mutableStateOf("") }
@@ -323,6 +328,18 @@ fun SenderScreen(
                     }
                 }
             }
+
+            HotspotGuideCard(
+                isSender = true,
+                hotspotActive = state.hotspotActive,
+                hotspotSsid = state.hotspotSsid,
+                hotspotPassword = state.hotspotPassword,
+                hotspotError = state.hotspotError,
+                onStartHotspot = onStartHotspot,
+                onStopHotspot = onStopHotspot,
+                onOpenSystemHotspot = onOpenSystemHotspot,
+                onCopyCredentials = onCopyHotspotCredentials
+            )
 
             TonalCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {

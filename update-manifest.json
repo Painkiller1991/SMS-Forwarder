@@ -1,11 +1,11 @@
 ﻿{
-  "versionCode": 50,
-  "versionName": "3.1.25-lan",
-  "apkAsset": "SMS-Forwarder-3.1.25-lan.apk",
+  "versionCode": 51,
+  "versionName": "3.1.26-lan",
+  "apkAsset": "SMS-Forwarder-3.1.26-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Real home-screen widget under Widgets → SMS Forwarder",
-    "Shows pending sync (sender) or Receive ON/OFF (receiver)",
-    "Quick Settings shade tile still available separately"
+    "No shared Wi-Fi? Start a local hotspot on the sender, join on the receiver, pair with the same QR/LAN method",
+    "In-app local hotspot Start/Stop with SSID/password (system Hotspot fallback)",
+    "Better Soft AP / hotspot LAN socket binding for sender"
   ]
 }

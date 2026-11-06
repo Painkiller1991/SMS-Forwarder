@@ -38,7 +38,7 @@ object ForwardClient {
     private val plainType = "text/plain; charset=utf-8".toMediaType()
 
     fun health(context: Context, host: String, port: Int): Result<Unit> = runCatching {
-        val client = LanNetwork.lanHttpClient(context)
+        val client = LanNetwork.lanHttpClient(context, preferredPeerHost = host)
         val url = "http://$host:$port/health"
         val request = Request.Builder().url(url).get().build()
         client.newCall(request).execute().use { response ->
@@ -66,7 +66,7 @@ object ForwardClient {
     ): Result<Unit> = runCatching {
         require(host.isNotBlank()) { "Receiver host not set — scan QR again" }
         val wireSecret = PayloadCrypto.effectiveSecret(secret, extraSecret)
-        val client = LanNetwork.lanHttpClient(context)
+        val client = LanNetwork.lanHttpClient(context, preferredPeerHost = host)
         val url = "http://$host:$port/sms"
         AgentDebugLog.log(
             hypothesisId = "H1",

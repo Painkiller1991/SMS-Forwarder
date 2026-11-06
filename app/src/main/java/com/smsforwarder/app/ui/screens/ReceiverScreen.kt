@@ -64,6 +64,7 @@ import com.smsforwarder.app.pairing.QrBitmap
 import com.smsforwarder.app.ui.UiState
 import com.smsforwarder.app.ui.components.AddressHero
 import com.smsforwarder.app.ui.components.AppShell
+import com.smsforwarder.app.ui.components.HotspotGuideCard
 import com.smsforwarder.app.ui.components.SectionHeader
 import com.smsforwarder.app.ui.components.StatusChip
 import com.smsforwarder.app.ui.components.SwipeMessageCard
@@ -284,6 +285,13 @@ fun ReceiverScreen(
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            item {
+                HotspotGuideCard(
+                    isSender = false,
+                    onHotspotLan = state.onHotspotLan
                 )
             }
 

@@ -226,6 +226,7 @@ class MainActivity : ComponentActivity() {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
     }
+
 }
 
 @Composable
@@ -255,12 +256,10 @@ private fun AppRoot(
                 refreshDeviceFlags()
                 vm.refreshDayBoundary()
                 val role = vm.state.value.role
-                if (role == AppRole.SENDER) {
-                    vm.verifySenderPairing()
-                }
+                vm.refreshNetworkIdentity()
                 if (role == AppRole.RECEIVER) {
                     ReceiveForegroundService.ensure(activity)
-                    vm.refreshFromPrefs()
+                    vm.refreshPairingQr()
                 }
             }
         }
@@ -278,12 +277,28 @@ private fun AppRoot(
         val perms = mutableListOf(
             Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_SMS,
-            Manifest.permission.CAMERA
+            Manifest.permission.CAMERA,
+            Manifest.permission.ACCESS_FINE_LOCATION
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             perms += Manifest.permission.POST_NOTIFICATIONS
+            perms += Manifest.permission.NEARBY_WIFI_DEVICES
         }
         permissionLauncher.launch(perms.toTypedArray())
+    }
+
+    fun requestHotspotPermissionsLocal(then: () -> Unit) {
+        val perms = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms += Manifest.permission.NEARBY_WIFI_DEVICES
+        }
+        val need = perms.any {
+            ContextCompat.checkSelfPermission(activity, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (need) {
+            permissionLauncher.launch(perms.toTypedArray())
+        }
+        then()
     }
 
     fun requestReceiverPermissions() {
@@ -374,7 +389,19 @@ private fun AppRoot(
             onClearDebugLog = { activity.clearDebugLog() },
             readDebugLog = { activity.readDebugLogText() },
             onChangeRole = { vm.setRole(AppRole.NONE) },
-            onDrainOutbox = { vm.drainOutbox(activity) }
+            onDrainOutbox = { vm.drainOutbox(activity) },
+            onStartHotspot = {
+                requestHotspotPermissionsLocal {
+                    vm.startLocalHotspot()
+                }
+            },
+            onStopHotspot = { vm.stopLocalHotspot() },
+            onOpenSystemHotspot = { vm.openSystemHotspotSettings(activity) },
+            onCopyHotspotCredentials = { text ->
+                val cm = activity.getSystemService(ClipboardManager::class.java)
+                cm.setPrimaryClip(ClipData.newPlainText("hotspot", text))
+                Toast.makeText(activity, "Hotspot credentials copied", Toast.LENGTH_SHORT).show()
+            }
         )
 
         AppRole.RECEIVER -> {
