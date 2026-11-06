@@ -46,6 +46,10 @@ object ForwardClient {
         }
     }
 
+    /**
+     * @param timestamp Auth clock used for HMAC + ±5 min skew (use "now" for outbox sync).
+     * @param smsTimestamp Original SMS time for inbox display; defaults to [timestamp].
+     */
     fun forward(
         context: Context,
         host: String,
@@ -56,7 +60,8 @@ object ForwardClient {
         timestamp: Long = System.currentTimeMillis(),
         msgId: String = UUID.randomUUID().toString(),
         quiet: Boolean = false,
-        test: Boolean = false
+        test: Boolean = false,
+        smsTimestamp: Long = timestamp
     ): Result<Unit> = runCatching {
         require(host.isNotBlank()) { "Receiver host not set — scan QR again" }
         val client = LanNetwork.lanHttpClient(context)
@@ -69,7 +74,9 @@ object ForwardClient {
                 "url" to url,
                 "bodyLen" to body.length,
                 "msgId" to msgId.take(36),
-                "lanIp" to (LanNetwork.ipv4(context) ?: "none")
+                "lanIp" to (LanNetwork.ipv4(context) ?: "none"),
+                "authAgeMs" to (System.currentTimeMillis() - timestamp),
+                "smsAgeMs" to (System.currentTimeMillis() - smsTimestamp)
             ),
             runId = "lan-url"
         )
@@ -103,6 +110,9 @@ object ForwardClient {
             .put("msgId", msgId)
             .put("quiet", quiet)
             .put("test", test)
+        if (smsTimestamp != timestamp) {
+            json.put("smsTimestamp", smsTimestamp)
+        }
         val blob = PayloadCrypto.encryptJson(secret, json)
         val request = Request.Builder()
             .url(url)

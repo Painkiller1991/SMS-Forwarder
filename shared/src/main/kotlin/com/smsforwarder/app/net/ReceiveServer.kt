@@ -59,10 +59,12 @@ class ReceiveServer(
             val msgId = json.optString("msgId").trim().ifBlank { null }
             val quiet = json.optBoolean("quiet", false)
             val test = json.optBoolean("test", false)
+            // Auth uses [timestamp] (must be fresh). Inbox uses optional smsTimestamp.
+            val smsTimestamp = if (json.has("smsTimestamp")) json.getLong("smsTimestamp") else timestamp
             if (!Auth.verify(secret, timestamp, sender, body, signature)) {
                 return newFixedLengthResponse(Response.Status.UNAUTHORIZED, MIME_PLAINTEXT, "Unauthorized")
             }
-            val status = onSms(sender, body, timestamp, msgId, quiet, test).ifBlank { "stored" }
+            val status = onSms(sender, body, smsTimestamp, msgId, quiet, test).ifBlank { "stored" }
             val ack = JSONObject()
                 .put("ok", true)
                 .put("msgId", msgId ?: JSONObject.NULL)

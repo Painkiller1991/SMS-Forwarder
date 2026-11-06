@@ -184,6 +184,8 @@ class SmsForwardService : Service() {
             runId = "sync-debug"
         )
         // #endregion
+        // Auth skew is ±5 min: sign with "now", keep original SMS time for inbox.
+        val authTs = System.currentTimeMillis()
         val result = ForwardClient.forward(
             context = this,
             host = row.host,
@@ -191,10 +193,11 @@ class SmsForwardService : Service() {
             secret = row.secret,
             sender = row.sender,
             body = row.body,
-            timestamp = row.smsTimestamp,
+            timestamp = authTs,
             msgId = row.msgId,
             quiet = quiet,
-            test = false
+            test = false,
+            smsTimestamp = row.smsTimestamp
         )
         if (result.isSuccess) {
             runBlocking { dao.markSynced(row.id) }
