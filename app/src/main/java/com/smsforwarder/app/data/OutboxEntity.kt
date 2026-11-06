@@ -18,6 +18,8 @@ data class OutboxEntity(
     val host: String,
     val port: Int,
     val secret: String,
+    /** Snapshot of Extra Secret at enqueue time (blank = legacy). */
+    val extraSecret: String = "",
     val sender: String,
     val body: String,
     val smsTimestamp: Long,

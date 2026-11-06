@@ -193,8 +193,9 @@ class MainActivity : ComponentActivity() {
 
     fun requestBatteryUnrestricted() {
         val pm = getSystemService(PowerManager::class.java)
-        if (pm.isIgnoringBatteryOptimizations(packageName)) {
-            Toast.makeText(this, "Battery already unrestricted", Toast.LENGTH_SHORT).show()
+        if (pm != null && pm.isIgnoringBatteryOptimizations(packageName)) {
+            // Already unrestricted — open app details so user can verify OEM paths.
+            openAppBatterySettings()
             return
         }
         try {
@@ -203,6 +204,24 @@ class MainActivity : ComponentActivity() {
                     data = Uri.parse("package:$packageName")
                 }
             )
+        } catch (_: Exception) {
+            openAppBatterySettings()
+        }
+    }
+
+    /** Apps → this app → battery / details (clearer than the system ignore list alone). */
+    fun openAppBatterySettings() {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+            )
+            Toast.makeText(
+                this,
+                "Open Battery → Unrestricted for SMS Forwarder",
+                Toast.LENGTH_LONG
+            ).show()
         } catch (_: Exception) {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
@@ -310,14 +329,14 @@ private fun AppRoot(
                     if (info == null) {
                         Toast.makeText(activity, "Invalid QR", Toast.LENGTH_SHORT).show()
                     } else {
-                        vm.applyPairing(info) { ok, detail ->
+                        vm.applyPairing(info) { _, detail ->
                             Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()
                         }
                     }
                 }
             },
-            onSaveEndpoint = { host, port, secret ->
-                val err = vm.saveManualEndpoint(host, port, secret) { _, detail ->
+            onSaveEndpoint = { host, port, secret, extraSecret ->
+                val err = vm.saveManualEndpoint(host, port, secret, extraSecret) { _, detail ->
                     Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()
                 }
                 if (err != null) {
@@ -326,6 +345,18 @@ private fun AppRoot(
             },
             onRemoveEndpoint = { id -> vm.removeEndpoint(id) },
             onToggleEndpoint = { id, enabled -> vm.setEndpointEnabled(id, enabled) },
+            onSetEndpointExtraSecret = { id, extra, confirm ->
+                val err = vm.setEndpointExtraSecret(id, extra, confirm)
+                if (err != null) Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
+                else Toast.makeText(activity, "Extra Secret saved", Toast.LENGTH_SHORT).show()
+                err
+            },
+            onSetDefaultExtraSecret = { extra, confirm ->
+                val err = vm.setDefaultExtraSecret(extra, confirm)
+                if (err != null) Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
+                else Toast.makeText(activity, "Default Extra Secret saved", Toast.LENGTH_SHORT).show()
+                err
+            },
             onRequestSmsPermission = { requestSenderPermissions() },
             onTestSend = {
                 vm.testSendToReceiver { _, detail ->
@@ -333,6 +364,10 @@ private fun AppRoot(
                 }
             },
             onBatteryUnrestricted = { activity.requestBatteryUnrestricted() },
+            onSnoozeBatteryBanner = {
+                vm.snoozeBatteryBanner()
+                Toast.makeText(activity, "Battery reminder snoozed 7 days", Toast.LENGTH_SHORT).show()
+            },
             onThemeMode = vm::setThemeMode,
             onSendDebugPing = { activity.sendDebugPing() },
             onCopyDebugLog = { activity.copyDebugLog() },
@@ -403,6 +438,16 @@ private fun AppRoot(
                         }
                     },
                     onBatteryUnrestricted = { activity.requestBatteryUnrestricted() },
+                    onSnoozeBatteryBanner = {
+                        vm.snoozeBatteryBanner()
+                        Toast.makeText(activity, "Battery reminder snoozed 7 days", Toast.LENGTH_SHORT).show()
+                    },
+                    onSetExtraSecret = { extra, confirm ->
+                        val err = vm.setReceiverExtraSecret(extra, confirm)
+                        if (err != null) Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
+                        else Toast.makeText(activity, "Extra Secret saved", Toast.LENGTH_SHORT).show()
+                        err
+                    },
                     onCopyAddress = {
                         val ip = state.localIp
                         if (ip.isBlank()) {

@@ -3,6 +3,7 @@ package com.smsforwarder.desktop
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.smsforwarder.app.net.PayloadCrypto
 import com.smsforwarder.app.net.ReceiveServer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
@@ -45,7 +46,9 @@ class ReceiveController(
             val server = ReceiveServer(
                 hostname = host,
                 port = prefs.port,
-                sharedSecretProvider = { prefs.sharedSecret },
+                sharedSecretProvider = {
+                    PayloadCrypto.effectiveSecret(prefs.sharedSecret, prefs.extraSecret)
+                },
                 onSms = { sender, body, timestamp, msgId, quiet, test ->
                     if (!msgId.isNullOrBlank() && !seenMsgIds.add(msgId)) {
                         return@ReceiveServer "duplicate"

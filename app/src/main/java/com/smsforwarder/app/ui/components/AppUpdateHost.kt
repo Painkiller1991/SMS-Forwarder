@@ -1,5 +1,7 @@
 package com.smsforwarder.app.ui.components
 
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -11,14 +13,19 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.smsforwarder.app.BuildConfig
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.update.ApkInstaller
@@ -40,10 +47,63 @@ fun AppUpdateHost(
         (activity.application as SmsForwarderApp).prefs
     }
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
     var downloading by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
     var downloadJob by remember { mutableStateOf<Job?>(null) }
     var pendingInstall by remember { mutableStateOf(false) }
+    var lastAutoCheckAt by remember { mutableLongStateOf(0L) }
+
+    fun applyCheckResult(result: UpdateCheckResult, fromManual: Boolean) {
+        when (result) {
+            is UpdateCheckResult.Available -> {
+                val update = result.update
+                if (update.forceUpdate) {
+                    UpdateLock.engage(activity, prefs, update.versionCode)
+                    onForceLockApplied()
+                }
+                offer.setOffer(update)
+            }
+            is UpdateCheckResult.UpToDate -> {
+                if (fromManual) {
+                    Toast.makeText(
+                        activity,
+                        "You're up to date (v${BuildConfig.VERSION_NAME})",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+            is UpdateCheckResult.Failed -> {
+                if (fromManual) {
+                    Toast.makeText(
+                        activity,
+                        "Update check failed — opening GitHub Latest",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    runCatching {
+                        activity.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse(UpdateChecker.LATEST_RELEASE_PAGE)
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun runUpdateCheck(fromManual: Boolean) {
+        scope.launch {
+            UpdateLock.clearIfSatisfied(prefs)
+            if (fromManual) {
+                Toast.makeText(activity, "Checking…", Toast.LENGTH_SHORT).show()
+            }
+            val result = UpdateChecker.check(prefs.skippedUpdateVersionCode)
+            lastAutoCheckAt = System.currentTimeMillis()
+            applyCheckResult(result, fromManual)
+        }
+    }
 
     val installPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -66,49 +126,21 @@ fun AppUpdateHost(
         }
     }
 
-    LaunchedEffect(Unit) {
-        UpdateLock.clearIfSatisfied(prefs)
-        when (val result = UpdateChecker.check(prefs.skippedUpdateVersionCode)) {
-            is UpdateCheckResult.Available -> {
-                val update = result.update
-                if (update.forceUpdate) {
-                    UpdateLock.engage(activity, prefs, update.versionCode)
-                    onForceLockApplied()
-                }
-                offer.setOffer(update)
-            }
-            is UpdateCheckResult.UpToDate, is UpdateCheckResult.Failed -> Unit
+    // Cold start + whenever the UI returns to foreground (throttled).
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
+            val now = System.currentTimeMillis()
+            if (now - lastAutoCheckAt < 30_000L) return@LifecycleEventObserver
+            runUpdateCheck(fromManual = false)
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(offer.manualCheckTick) {
         if (offer.manualCheckTick <= 0) return@LaunchedEffect
-        Toast.makeText(activity, "Checking…", Toast.LENGTH_SHORT).show()
-        UpdateLock.clearIfSatisfied(prefs)
-        when (val result = UpdateChecker.check(prefs.skippedUpdateVersionCode)) {
-            is UpdateCheckResult.Available -> {
-                val update = result.update
-                if (update.forceUpdate) {
-                    UpdateLock.engage(activity, prefs, update.versionCode)
-                    onForceLockApplied()
-                }
-                offer.setOffer(update)
-            }
-            is UpdateCheckResult.UpToDate -> {
-                Toast.makeText(
-                    activity,
-                    "You're up to date (v${BuildConfig.VERSION_NAME})",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-            is UpdateCheckResult.Failed -> {
-                Toast.makeText(
-                    activity,
-                    "Update check failed: ${result.reason}",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }
+        runUpdateCheck(fromManual = true)
     }
 
     val update = offer.available

@@ -53,6 +53,36 @@ class Prefs(context: Context) {
         SecretStore.write(appContext, secret)
     }
 
+    /**
+     * Receiver Extra Secret (passphrase). Blank = legacy QR-only crypto.
+     * Never included in QR / pairing payload.
+     */
+    var extraSecret: String
+        get() = sp.getString(KEY_EXTRA_SECRET, "").orEmpty()
+        set(value) {
+            sp.edit().putString(KEY_EXTRA_SECRET, value).commit()
+        }
+
+    /** Default Extra Secret applied when pairing a new sender endpoint (optional). */
+    var defaultExtraSecret: String
+        get() = sp.getString(KEY_DEFAULT_EXTRA_SECRET, "").orEmpty()
+        set(value) {
+            sp.edit().putString(KEY_DEFAULT_EXTRA_SECRET, value).commit()
+        }
+
+    var batteryBannerSnoozeUntil: Long
+        get() = sp.getLong(KEY_BATTERY_SNOOZE_UNTIL, 0L)
+        set(value) {
+            sp.edit().putLong(KEY_BATTERY_SNOOZE_UNTIL, value).commit()
+        }
+
+    fun isBatteryBannerSnoozed(now: Long = System.currentTimeMillis()): Boolean =
+        now < batteryBannerSnoozeUntil
+
+    fun snoozeBatteryBanner(days: Int = 7) {
+        batteryBannerSnoozeUntil = System.currentTimeMillis() + days * 24L * 60L * 60L * 1000L
+    }
+
     var paired: Boolean
         get() = endpointConfigured || sp.getBoolean(KEY_PAIRED, false)
         set(value) {
@@ -150,7 +180,13 @@ class Prefs(context: Context) {
     /**
      * Adds or updates a sender target by host:port. Returns error message or null.
      */
-    fun upsertEndpoint(secret: String, host: String, port: Int, label: String = ""): String? {
+    fun upsertEndpoint(
+        secret: String,
+        host: String,
+        port: Int,
+        label: String = "",
+        extraSecret: String? = null
+    ): String? {
         val s = secret.trim()
         val h = host.trim()
         if (h.isBlank()) return "Enter receiver IP"
@@ -159,8 +195,21 @@ class Prefs(context: Context) {
         val current = endpoints.toMutableList()
         val key = "${h.lowercase()}:$port"
         val idx = current.indexOfFirst { it.addressKey == key }
+        val resolvedExtra = when {
+            extraSecret != null -> extraSecret
+            idx >= 0 -> current[idx].extraSecret
+            else -> defaultExtraSecret
+        }.trim()
+        if (resolvedExtra.isNotEmpty() && resolvedExtra.length < ReceiverEndpoint.MIN_EXTRA_SECRET_LEN) {
+            return "Extra Secret must be at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters"
+        }
         if (idx >= 0) {
-            current[idx] = current[idx].copy(secret = s, label = label.ifBlank { current[idx].label }, enabled = true)
+            current[idx] = current[idx].copy(
+                secret = s,
+                extraSecret = resolvedExtra,
+                label = label.ifBlank { current[idx].label },
+                enabled = true
+            )
         } else {
             if (current.size >= ReceiverEndpoint.MAX_DEVICES) {
                 return "Max ${ReceiverEndpoint.MAX_DEVICES} devices — remove one first"
@@ -170,6 +219,7 @@ class Prefs(context: Context) {
                     host = h,
                     port = port,
                     secret = s,
+                    extraSecret = resolvedExtra,
                     enabled = true,
                     label = label
                 )
@@ -180,8 +230,8 @@ class Prefs(context: Context) {
     }
 
     /** Legacy single-pair API — upserts into the endpoint list. */
-    fun applyPairing(secret: String, host: String, port: Int) {
-        upsertEndpoint(secret, host, port)
+    fun applyPairing(secret: String, host: String, port: Int, extraSecret: String? = null) {
+        upsertEndpoint(secret, host, port, extraSecret = extraSecret)
     }
 
     fun removeEndpoint(id: String) {
@@ -192,6 +242,51 @@ class Prefs(context: Context) {
         persistEndpoints(
             endpoints.map { if (it.id == id) it.copy(enabled = enabled) else it }
         )
+    }
+
+    fun setEndpointExtraSecret(id: String, extraSecret: String): String? {
+        val trimmed = extraSecret.trim()
+        if (trimmed.isNotEmpty() && trimmed.length < ReceiverEndpoint.MIN_EXTRA_SECRET_LEN) {
+            return "Extra Secret must be at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters"
+        }
+        persistEndpoints(
+            endpoints.map { if (it.id == id) it.copy(extraSecret = trimmed) else it }
+        )
+        return null
+    }
+
+    fun updateEndpoint(
+        id: String,
+        host: String? = null,
+        port: Int? = null,
+        secret: String? = null,
+        extraSecret: String? = null,
+        label: String? = null,
+        enabled: Boolean? = null
+    ): String? {
+        val current = endpoints.toMutableList()
+        val idx = current.indexOfFirst { it.id == id }
+        if (idx < 0) return "Device not found"
+        val ep = current[idx]
+        val next = ep.copy(
+            host = host?.trim() ?: ep.host,
+            port = port ?: ep.port,
+            secret = secret?.trim() ?: ep.secret,
+            extraSecret = extraSecret?.trim() ?: ep.extraSecret,
+            label = label ?: ep.label,
+            enabled = enabled ?: ep.enabled
+        )
+        if (!next.isValid()) {
+            if (next.extraSecret.isNotEmpty() &&
+                next.extraSecret.length < ReceiverEndpoint.MIN_EXTRA_SECRET_LEN
+            ) {
+                return "Extra Secret must be at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters"
+            }
+            return "Invalid device settings"
+        }
+        current[idx] = next
+        persistEndpoints(current)
+        return null
     }
 
     var themeMode: ThemeMode
@@ -218,6 +313,9 @@ class Prefs(context: Context) {
         const val PREFS_NAME = "sms_forwarder"
         private const val KEY_ROLE = "role"
         private const val KEY_SECRET = "shared_secret"
+        private const val KEY_EXTRA_SECRET = "extra_secret"
+        private const val KEY_DEFAULT_EXTRA_SECRET = "default_extra_secret"
+        private const val KEY_BATTERY_SNOOZE_UNTIL = "battery_banner_snooze_until"
         private const val KEY_PAIRED = "paired"
         private const val KEY_RECEIVE_ENABLED = "receive_enabled"
         private const val KEY_SENDER_ENABLED = "sender_enabled"

@@ -29,6 +29,52 @@ interface OutboxDao {
 
     @Query(
         """
+        SELECT endpointId, COUNT(*) as cnt FROM outbox
+        WHERE state = 'pending'
+        GROUP BY endpointId
+        """
+    )
+    suspend fun pendingCountsByEndpoint(): List<EndpointPendingCount>
+
+    @Query(
+        """
+        SELECT endpointId, COUNT(*) as cnt FROM outbox
+        WHERE state = 'pending'
+        GROUP BY endpointId
+        """
+    )
+    fun observePendingCountsByEndpoint(): Flow<List<EndpointPendingCount>>
+
+    @Query(
+        """
+        SELECT * FROM outbox
+        WHERE state = 'pending'
+        ORDER BY createdAt DESC
+        LIMIT 1
+        """
+    )
+    suspend fun latestPendingError(): OutboxEntity?
+
+    @Query(
+        """
+        SELECT * FROM outbox
+        WHERE endpointId = :endpointId AND lastError IS NOT NULL AND length(lastError) > 0
+        ORDER BY createdAt DESC
+        LIMIT 1
+        """
+    )
+    suspend fun latestErrorForEndpoint(endpointId: String): OutboxEntity?
+
+    @Query(
+        """
+        SELECT MAX(createdAt) FROM outbox
+        WHERE endpointId = :endpointId AND state IN ('synced', 'done')
+        """
+    )
+    suspend fun lastSyncedAt(endpointId: String): Long?
+
+    @Query(
+        """
         UPDATE outbox SET state = 'synced', lastError = NULL
         WHERE id = :id
         """

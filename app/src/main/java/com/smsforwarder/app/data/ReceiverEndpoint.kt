@@ -9,6 +9,8 @@ data class ReceiverEndpoint(
     val host: String,
     val port: Int,
     val secret: String,
+    /** Optional passphrase; blank = legacy QR-only key. New pairings should set ≥8 chars. */
+    val extraSecret: String = "",
     val enabled: Boolean = true,
     val label: String = ""
 ) {
@@ -19,24 +21,28 @@ data class ReceiverEndpoint(
         get() = "${host.trim().lowercase()}:$port"
 
     fun isValid(): Boolean =
-        host.isNotBlank() && secret.length >= 16 && port in 1..65535
+        host.isNotBlank() && secret.length >= 16 && port in 1..65535 &&
+            (extraSecret.isEmpty() || extraSecret.length >= 8)
 
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("host", host)
         .put("port", port)
         .put("secret", secret)
+        .put("extraSecret", extraSecret)
         .put("enabled", enabled)
         .put("label", label)
 
     companion object {
         const val MAX_DEVICES = 8
+        const val MIN_EXTRA_SECRET_LEN = 8
 
         fun fromJson(o: JSONObject): ReceiverEndpoint = ReceiverEndpoint(
             id = o.optString("id").ifBlank { UUID.randomUUID().toString() },
             host = o.optString("host").trim(),
             port = o.optInt("port", 18765),
             secret = o.optString("secret").trim(),
+            extraSecret = o.optString("extraSecret").orEmpty(),
             enabled = o.optBoolean("enabled", true),
             label = o.optString("label").orEmpty()
         )

@@ -23,16 +23,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Password
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Widgets
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,13 +48,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.smsforwarder.app.tile.QsTileHelper
 import com.smsforwarder.app.data.DayBoundary
 import com.smsforwarder.app.data.MessageEntity
+import com.smsforwarder.app.data.ReceiverEndpoint
 import com.smsforwarder.app.data.ThemeMode
 import com.smsforwarder.app.net.ReceiveServer
+import com.smsforwarder.app.otp.OtpParser
 import com.smsforwarder.app.pairing.QrBitmap
 import com.smsforwarder.app.ui.UiState
 import com.smsforwarder.app.ui.components.AddressHero
@@ -58,6 +69,8 @@ import com.smsforwarder.app.ui.components.StatusChip
 import com.smsforwarder.app.ui.components.SwipeMessageCard
 import com.smsforwarder.app.ui.components.TonalCard
 import com.smsforwarder.app.ui.components.VersionLabel
+
+private enum class InboxFilter { ALL, OTP }
 
 @Composable
 fun ReceiverScreen(
@@ -77,6 +90,8 @@ fun ReceiverScreen(
     onDeleteMessage: (Long) -> Unit,
     onTestSend: () -> Unit,
     onBatteryUnrestricted: () -> Unit,
+    onSnoozeBatteryBanner: () -> Unit,
+    onSetExtraSecret: (extra: String, confirm: String) -> String?,
     onCopyAddress: () -> Unit,
     onThemeMode: (ThemeMode) -> Unit,
     onSendDebugPing: () -> Unit,
@@ -89,15 +104,133 @@ fun ReceiverScreen(
         state.pairingPayload.takeIf { it.isNotBlank() }?.let { QrBitmap.encode(it) }
     }
     var expandedMessageId by remember { mutableStateOf<Long?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
+    var inboxFilter by remember { mutableStateOf(InboxFilter.ALL) }
+    var showExtraDialog by remember { mutableStateOf(false) }
+    var showOemGuide by remember { mutableStateOf(false) }
+    var showTileHelp by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val listState = rememberLazyListState()
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress) expandedMessageId = null
     }
 
     val dayStart = DayBoundary.startOfTodayMillis()
-    val pinned = remember(messages) { messages.filter { it.pinned } }
-    val today = remember(messages, dayStart) {
-        messages.filter { !it.pinned && it.receivedAt >= dayStart }
+    val filtered = remember(messages, searchQuery, inboxFilter) {
+        messages.filter { msg ->
+            val q = searchQuery.trim()
+            val matchesSearch = q.isEmpty() ||
+                msg.sender.contains(q, ignoreCase = true) ||
+                msg.body.contains(q, ignoreCase = true) ||
+                (msg.otp?.contains(q, ignoreCase = true) == true)
+            val hasOtp = !msg.otp.isNullOrBlank() || OtpParser.extract(msg.body) != null
+            val matchesFilter = when (inboxFilter) {
+                InboxFilter.ALL -> true
+                InboxFilter.OTP -> hasOtp
+            }
+            matchesSearch && matchesFilter
+        }
+    }
+    val pinned = remember(filtered) { filtered.filter { it.pinned } }
+    val today = remember(filtered, dayStart) {
+        filtered.filter { !it.pinned && it.receivedAt >= dayStart }
+    }
+    val showBattery = needsBatteryUnrestricted && !state.batteryBannerSnoozed
+
+    if (showExtraDialog) {
+        var draft by remember { mutableStateOf(state.extraSecret) }
+        var confirm by remember { mutableStateOf(state.extraSecret) }
+        var err by remember { mutableStateOf<String?>(null) }
+        AlertDialog(
+            onDismissRequest = { showExtraDialog = false },
+            title = { Text("Extra Secret") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Passphrase both phones must know. Not included in the QR. " +
+                            "New pairings: at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters. " +
+                            "Leave blank only to keep working with legacy peers.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        label = { Text("Extra Secret") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = confirm,
+                        onValueChange = { confirm = it },
+                        label = { Text("Confirm") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    err?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val e = onSetExtraSecret(draft, confirm)
+                    if (e != null) err = e else showExtraDialog = false
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExtraDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showOemGuide) {
+        OemBatteryGuideDialog(
+            onDismiss = { showOemGuide = false },
+            onOpenBatterySettings = {
+                showOemGuide = false
+                onBatteryUnrestricted()
+            }
+        )
+    }
+
+    if (showTileHelp) {
+        AlertDialog(
+            onDismissRequest = { showTileHelp = false },
+            title = { Text("Home widget & Quick Settings") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Home widget:\n" +
+                            "Long-press home screen → Widgets → SMS Forwarder → drag to home.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        "Tap the widget to turn Receive ON/OFF.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "Optional shade tile:\n${QsTileHelper.MANUAL_STEPS}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        QsTileHelper.showAddToast(context)
+                        showTileHelp = false
+                    }
+                ) {
+                    Text("Add shade tile")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTileHelp = false }) { Text("Close") }
+            }
+        )
     }
 
     AppShell(
@@ -142,6 +275,16 @@ fun ReceiverScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (state.extraSecret.isNotEmpty()) {
+                        "Extra Secret: set (${state.extraSecret.length} chars)"
+                    } else {
+                        "Extra Secret: not set (legacy QR-only)"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             item {
@@ -203,6 +346,40 @@ fun ReceiverScreen(
                 }
             }
 
+            if (showBattery) {
+                item {
+                    TonalCard {
+                        Text("Background battery", fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Apps → SMS Forwarder → Battery → Unrestricted. Then check OEM keep-alive settings.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        FilledTonalButton(
+                            onClick = onBatteryUnrestricted,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.BatterySaver, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Allow unrestricted battery", modifier = Modifier.weight(1f))
+                            Icon(Icons.Default.ChevronRight, contentDescription = null)
+                        }
+                        Row {
+                            TextButton(onClick = onSnoozeBatteryBanner) {
+                                Text("Later (7 days)")
+                            }
+                            TextButton(onClick = { showOemGuide = true }) {
+                                Icon(Icons.AutoMirrored.Filled.HelpOutline, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("OEM help")
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 SectionHeader("Actions", "Test your connection")
                 Spacer(Modifier.height(8.dp))
@@ -213,12 +390,30 @@ fun ReceiverScreen(
                         enabled = state.receiveEnabled,
                         onClick = onTestSend
                     )
-                    if (needsBatteryUnrestricted) {
+                    Spacer(Modifier.height(4.dp))
+                    ActionRow(
+                        icon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        title = if (state.extraSecret.isNotEmpty()) "Edit Extra Secret" else "Set Extra Secret",
+                        onClick = { showExtraDialog = true }
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    ActionRow(
+                        icon = { Icon(Icons.Default.Widgets, contentDescription = null) },
+                        title = "Add home widget (Widgets list)",
+                        onClick = { showTileHelp = true }
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    ActionRow(
+                        icon = { Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null) },
+                        title = "Add Quick Settings shade tile",
+                        onClick = { QsTileHelper.showAddToast(context) }
+                    )
+                    if (!showBattery && needsBatteryUnrestricted) {
                         Spacer(Modifier.height(4.dp))
                         ActionRow(
                             icon = { Icon(Icons.Default.BatterySaver, contentDescription = null) },
-                            title = "Allow unrestricted battery",
-                            onClick = onBatteryUnrestricted
+                            title = "Battery / OEM keep-alive",
+                            onClick = { showOemGuide = true }
                         )
                     }
                     if (needsAutofillSetup) {
@@ -250,7 +445,7 @@ fun ReceiverScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Pairing QR", fontWeight = FontWeight.SemiBold)
                             Text(
-                                if (qrBitmap != null) "Show this to the sender phone"
+                                if (qrBitmap != null) "Show this to the sender phone (Extra Secret is not in the QR)"
                                 else "Connect to Wi‑Fi to show QR",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -305,13 +500,35 @@ fun ReceiverScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        label = { Text("Search inbox") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = inboxFilter == InboxFilter.ALL,
+                            onClick = { inboxFilter = InboxFilter.ALL },
+                            label = { Text("All") }
+                        )
+                        FilterChip(
+                            selected = inboxFilter == InboxFilter.OTP,
+                            onClick = { inboxFilter = InboxFilter.OTP },
+                            label = { Text("OTP") }
+                        )
+                    }
                 }
             }
 
-            if (messages.isEmpty()) {
+            if (filtered.isEmpty()) {
                 item {
                     Text(
-                        "No messages in inbox today.",
+                        if (messages.isEmpty()) "No messages in inbox today."
+                        else "No messages match this filter.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

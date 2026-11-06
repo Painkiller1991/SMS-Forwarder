@@ -14,6 +14,7 @@ import com.smsforwarder.app.R
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.data.OutboxEntity
 import com.smsforwarder.app.debug.AgentDebugLog
+import com.smsforwarder.app.widget.StatusWidgetProvider
 import kotlinx.coroutines.runBlocking
 import java.util.UUID
 import kotlin.concurrent.thread
@@ -31,15 +32,6 @@ class SmsForwardService : Service() {
 
         when (intent?.action) {
             ACTION_DRAIN -> {
-                // #region agent log
-                AgentDebugLog.log(
-                    hypothesisId = "H2",
-                    location = "SmsForwardService.onStartCommand",
-                    message = "ACTION_DRAIN received",
-                    data = mapOf("startId" to startId),
-                    runId = "sync-debug"
-                )
-                // #endregion
                 thread(name = "sms-outbox-drain") {
                     try {
                         drainOnce()
@@ -107,6 +99,7 @@ class SmsForwardService : Service() {
                         host = ep.host,
                         port = ep.port,
                         secret = ep.secret,
+                        extraSecret = ep.extraSecret,
                         sender = sender,
                         body = body,
                         smsTimestamp = timestamp,
@@ -132,20 +125,6 @@ class SmsForwardService : Service() {
     private fun drainOnce() {
         val app = application as SmsForwarderApp
         val pending = runBlocking { app.database.outboxDao().allPendingOrdered() }
-        val now = System.currentTimeMillis()
-        // #region agent log
-        AgentDebugLog.log(
-            hypothesisId = "H2",
-            location = "SmsForwardService.drainOnce",
-            message = "Drain start",
-            data = mapOf(
-                "pending" to pending.size,
-                "oldestAgeMs" to (pending.firstOrNull()?.let { now - it.smsTimestamp } ?: -1),
-                "newestAgeMs" to (pending.lastOrNull()?.let { now - it.smsTimestamp } ?: -1)
-            ),
-            runId = "sync-debug"
-        )
-        // #endregion
         if (pending.isEmpty()) return
         val newestMsgId = pending.maxWithOrNull(
             compareBy({ it.smsTimestamp }, { it.createdAt }, { it.id })
@@ -166,24 +145,6 @@ class SmsForwardService : Service() {
     /** @return true if synced (ACK ok). */
     private fun attempt(app: SmsForwarderApp, row: OutboxEntity, quiet: Boolean): Boolean {
         val dao = app.database.outboxDao()
-        val ageMs = System.currentTimeMillis() - row.smsTimestamp
-        // #region agent log
-        AgentDebugLog.log(
-            hypothesisId = "H1",
-            location = "SmsForwardService.attempt",
-            message = "Forward attempt",
-            data = mapOf(
-                "host" to row.host,
-                "port" to row.port,
-                "ageMs" to ageMs,
-                "skewRisk" to (ageMs > 5 * 60 * 1000L),
-                "quiet" to quiet,
-                "attempts" to row.attempts,
-                "msgId" to row.msgId.take(8)
-            ),
-            runId = "sync-debug"
-        )
-        // #endregion
         // Auth skew is ±5 min: sign with "now", keep original SMS time for inbox.
         val authTs = System.currentTimeMillis()
         val result = ForwardClient.forward(
@@ -197,40 +158,20 @@ class SmsForwardService : Service() {
             msgId = row.msgId,
             quiet = quiet,
             test = false,
-            smsTimestamp = row.smsTimestamp
+            smsTimestamp = row.smsTimestamp,
+            extraSecret = row.extraSecret
         )
         if (result.isSuccess) {
             runBlocking { dao.markSynced(row.id) }
-            // #region agent log
-            AgentDebugLog.log(
-                hypothesisId = "H3",
-                location = "SmsForwardService.attempt",
-                message = "Forward OK synced",
-                data = mapOf("id" to row.id, "quiet" to quiet),
-                runId = "sync-debug"
-            )
-            // #endregion
             Log.i(TAG, "Synced ${row.host}:${row.port} quiet=$quiet")
+            StatusWidgetProvider.requestUpdate(this)
             return true
         }
         val attempts = row.attempts + 1
         val err = result.exceptionOrNull()?.message?.take(160)
         runBlocking { dao.markAttemptFailed(row.id, attempts, err) }
-        // #region agent log
-        AgentDebugLog.log(
-            hypothesisId = "H1",
-            location = "SmsForwardService.attempt",
-            message = "Forward FAIL",
-            data = mapOf(
-                "err" to err,
-                "ageMs" to ageMs,
-                "skewRisk" to (ageMs > 5 * 60 * 1000L),
-                "attempts" to attempts
-            ),
-            runId = "sync-debug"
-        )
-        // #endregion
         Log.w(TAG, "Sync fail ${row.host}:${row.port} attempt=$attempts err=$err")
+        StatusWidgetProvider.requestUpdate(this)
         return false
     }
 
@@ -254,14 +195,6 @@ class SmsForwardService : Service() {
         }
 
         fun drain(context: Context) {
-            // #region agent log
-            AgentDebugLog.log(
-                hypothesisId = "H2",
-                location = "SmsForwardService.drain",
-                message = "drain() requested",
-                runId = "sync-debug"
-            )
-            // #endregion
             context.startForegroundService(
                 Intent(context, SmsForwardService::class.java).apply {
                     action = ACTION_DRAIN

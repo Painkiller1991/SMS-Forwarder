@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SMS WiFi Forwarder</string>
+    <string name="qs_tile_label">SMS Forwarder</string>
+    <string name="widget_title">SMS Forwarder</string>
+    <string name="widget_description">Pending sync or Receive ON/OFF on the home screen</string>
+    <string name="widget_status_loading">…</string>
+    <string name="widget_hint_tap">Tap to act</string>
     <string name="receive_channel_name">SMS receive server</string>
     <string name="receive_channel_desc">Keeps the local Wi‑Fi listener running while Receive mode is on</string>
     <string name="inbox_channel_name">Forwarded SMS</string>

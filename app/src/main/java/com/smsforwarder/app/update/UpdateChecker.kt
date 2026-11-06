@@ -1,7 +1,6 @@
 package com.smsforwarder.app.update
 
 import com.smsforwarder.app.BuildConfig
-import com.smsforwarder.app.debug.AgentDebugLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -23,6 +22,9 @@ object UpdateChecker {
     /** Avoids GitHub API rate limits; follows redirect to the Latest release asset. */
     private const val MANIFEST_DIRECT =
         "https://github.com/$OWNER/$REPO/releases/latest/download/${UpdateManifest.ASSET_NAME}"
+    /** Fallback browser URL when the in-app check cannot reach GitHub. */
+    const val LATEST_RELEASE_PAGE =
+        "https://github.com/$OWNER/$REPO/releases/latest"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -35,19 +37,6 @@ object UpdateChecker {
         try {
             val (manifest, apkUrl, apkBytes, notes) = loadLatest()
                 ?: return@withContext UpdateCheckResult.Failed("Could not reach GitHub releases")
-
-            AgentDebugLog.log(
-                hypothesisId = "UPD",
-                location = "UpdateChecker.check",
-                message = "Manifest loaded",
-                data = mapOf(
-                    "installed" to BuildConfig.VERSION_CODE,
-                    "latest" to manifest.versionCode,
-                    "latestName" to manifest.versionName,
-                    "skipped" to skippedVersionCode
-                ),
-                runId = "update-check"
-            )
 
             if (manifest.versionCode <= BuildConfig.VERSION_CODE) {
                 return@withContext UpdateCheckResult.UpToDate(
@@ -79,13 +68,6 @@ object UpdateChecker {
                 )
             )
         } catch (e: Exception) {
-            AgentDebugLog.log(
-                hypothesisId = "UPD",
-                location = "UpdateChecker.check",
-                message = "Check failed",
-                data = mapOf("error" to (e.message?.take(160) ?: e.javaClass.simpleName)),
-                runId = "update-check"
-            )
             UpdateCheckResult.Failed(e.message?.take(80) ?: "Update check failed")
         }
     }
@@ -142,16 +124,7 @@ object UpdateChecker {
             .get()
             .build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                AgentDebugLog.log(
-                    hypothesisId = "UPD",
-                    location = "UpdateChecker.get",
-                    message = "HTTP not OK",
-                    data = mapOf("url" to url.take(120), "code" to response.code),
-                    runId = "update-check"
-                )
-                return null
-            }
+            if (!response.isSuccessful) return null
             return response.body?.string()
         }
     }

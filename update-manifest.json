@@ -1,11 +1,11 @@
 ﻿{
-  "versionCode": 45,
-  "versionName": "3.1.20-lan",
-  "apkAsset": "SMS-Forwarder-3.1.20-lan.apk",
+  "versionCode": 50,
+  "versionName": "3.1.25-lan",
+  "apkAsset": "SMS-Forwarder-3.1.25-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Fix false You're up to date when update check fails",
-    "More reliable update check (direct GitHub download, not only API)",
-    "Includes sync 401 fix from 3.1.19 — install on sender and receiver"
+    "Real home-screen widget under Widgets → SMS Forwarder",
+    "Shows pending sync (sender) or Receive ON/OFF (receiver)",
+    "Quick Settings shade tile still available separately"
   ]
 }

@@ -61,9 +61,11 @@ object ForwardClient {
         msgId: String = UUID.randomUUID().toString(),
         quiet: Boolean = false,
         test: Boolean = false,
-        smsTimestamp: Long = timestamp
+        smsTimestamp: Long = timestamp,
+        extraSecret: String = ""
     ): Result<Unit> = runCatching {
         require(host.isNotBlank()) { "Receiver host not set — scan QR again" }
+        val wireSecret = PayloadCrypto.effectiveSecret(secret, extraSecret)
         val client = LanNetwork.lanHttpClient(context)
         val url = "http://$host:$port/sms"
         AgentDebugLog.log(
@@ -74,9 +76,7 @@ object ForwardClient {
                 "url" to url,
                 "bodyLen" to body.length,
                 "msgId" to msgId.take(36),
-                "lanIp" to (LanNetwork.ipv4(context) ?: "none"),
-                "authAgeMs" to (System.currentTimeMillis() - timestamp),
-                "smsAgeMs" to (System.currentTimeMillis() - smsTimestamp)
+                "lanIp" to (LanNetwork.ipv4(context) ?: "none")
             ),
             runId = "lan-url"
         )
@@ -101,7 +101,7 @@ object ForwardClient {
             )
         }
 
-        val signature = Auth.sign(secret, timestamp, sender, body)
+        val signature = Auth.sign(wireSecret, timestamp, sender, body)
         val json = JSONObject()
             .put("sender", sender)
             .put("body", body)
@@ -113,7 +113,7 @@ object ForwardClient {
         if (smsTimestamp != timestamp) {
             json.put("smsTimestamp", smsTimestamp)
         }
-        val blob = PayloadCrypto.encryptJson(secret, json)
+        val blob = PayloadCrypto.encryptJson(wireSecret, json)
         val request = Request.Builder()
             .url(url)
             .post(blob.toRequestBody(plainType))
@@ -179,7 +179,7 @@ object ForwardClient {
             val ep = targets.first()
             val r = forward(
                 context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId,
-                quiet = quiet, test = test
+                quiet = quiet, test = test, extraSecret = ep.extraSecret
             )
             return if (r.isSuccess) {
                 FanoutResult(1, 1, emptyList())
@@ -195,7 +195,7 @@ object ForwardClient {
                 pool.submit {
                     val r = forward(
                         context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId,
-                        quiet = quiet, test = test
+                        quiet = quiet, test = test, extraSecret = ep.extraSecret
                     )
                     if (r.isSuccess) okCount.incrementAndGet()
                     else failures.add(ep.displayName)

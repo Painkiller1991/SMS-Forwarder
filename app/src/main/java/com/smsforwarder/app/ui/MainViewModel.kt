@@ -7,10 +7,12 @@ import androidx.lifecycle.viewModelScope
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.data.AppRole
 import com.smsforwarder.app.data.DayBoundary
+import com.smsforwarder.app.data.EndpointDeliveryStatus
 import com.smsforwarder.app.data.MessageEntity
 import com.smsforwarder.app.data.ReceiverEndpoint
 import com.smsforwarder.app.data.ThemeMode
 import com.smsforwarder.app.debug.AgentDebugLog
+import com.smsforwarder.app.net.FanoutResult
 import com.smsforwarder.app.net.ForwardClient
 import com.smsforwarder.app.net.IncomingSms
 import com.smsforwarder.app.net.KeepAliveScheduler
@@ -22,6 +24,7 @@ import com.smsforwarder.app.net.SmsForwardService
 import com.smsforwarder.app.net.WifiIp
 import com.smsforwarder.app.pairing.PairingInfo
 import com.smsforwarder.app.update.UpdateLock
+import com.smsforwarder.app.widget.StatusWidgetProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -46,9 +49,15 @@ data class UiState(
     val endpointCount: Int = 0,
     val pairCheckInProgress: Boolean = false,
     val sharedSecret: String = "",
+    /** Receiver Extra Secret (never in QR). */
+    val extraSecret: String = "",
+    /** Default Extra Secret for newly paired sender endpoints. */
+    val defaultExtraSecret: String = "",
     val receiverHost: String = "",
     val receiverPort: Int = ReceiveServer.DEFAULT_PORT,
     val endpoints: List<ReceiverEndpoint> = emptyList(),
+    val endpointStatus: Map<String, EndpointDeliveryStatus> = emptyMap(),
+    val pendingByEndpoint: Map<String, Int> = emptyMap(),
     val pairingPayload: String = "",
     val localIp: String = "",
     val vpnActive: Boolean = false,
@@ -56,7 +65,8 @@ data class UiState(
     val inboxMessages: List<MessageEntity> = emptyList(),
     val historyMessages: List<MessageEntity> = emptyList(),
     /** Sender outbox rows still waiting for ACK. */
-    val pendingSyncCount: Int = 0
+    val pendingSyncCount: Int = 0,
+    val batteryBannerSnoozed: Boolean = false
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -102,20 +112,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             app.database.outboxDao().observePendingCount().collect { count ->
                 _state.update { it.copy(pendingSyncCount = count) }
+                StatusWidgetProvider.requestUpdate(getApplication())
+            }
+        }
+        viewModelScope.launch {
+            app.database.outboxDao().observePendingCountsByEndpoint().collect { rows ->
+                val map = rows.associate { it.endpointId to it.cnt }
+                _state.update { state ->
+                    val status = state.endpointStatus.toMutableMap()
+                    for ((id, cnt) in map) {
+                        val prev = status[id] ?: EndpointDeliveryStatus(id)
+                        status[id] = prev.copy(pendingCount = cnt)
+                    }
+                    // Zero out endpoints no longer pending
+                    for (id in status.keys.toList()) {
+                        if (id !in map) {
+                            status[id] = status[id]!!.copy(pendingCount = 0)
+                        }
+                    }
+                    state.copy(pendingByEndpoint = map, endpointStatus = status)
+                }
             }
         }
     }
 
     fun drainOutbox(context: Context) {
-        // #region agent log
-        AgentDebugLog.log(
-            hypothesisId = "H2",
-            location = "MainViewModel.drainOutbox",
-            message = "Sync now tapped",
-            data = mapOf("pendingSyncCount" to _state.value.pendingSyncCount),
-            runId = "sync-debug"
-        )
-        // #endregion
         SmsForwardService.drain(context.applicationContext)
     }
 
@@ -140,6 +161,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 receiveEnabled = prefs.receiveEnabled,
                 paired = prefs.endpointConfigured,
                 sharedSecret = prefs.sharedSecret,
+                extraSecret = prefs.extraSecret,
+                defaultExtraSecret = prefs.defaultExtraSecret,
                 receiverHost = prefs.receiverHost,
                 receiverPort = prefs.receiverPort,
                 endpoints = eps,
@@ -147,9 +170,71 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 pairingPayload = payload,
                 localIp = ip,
                 vpnActive = LanNetwork.vpnActive(ctx),
-                themeMode = prefs.themeMode
+                themeMode = prefs.themeMode,
+                batteryBannerSnoozed = prefs.isBatteryBannerSnoozed()
             )
         }
+    }
+
+    fun setReceiverExtraSecret(extra: String, confirm: String): String? {
+        val e = extra.trim()
+        val c = confirm.trim()
+        if (e.isEmpty()) {
+            // Legacy blank allowed for old peers
+            prefs.extraSecret = ""
+            refreshFromPrefs()
+            if (prefs.receiveEnabled) {
+                ReceiveForegroundService.ensure(getApplication())
+            }
+            return null
+        }
+        if (e.length < ReceiverEndpoint.MIN_EXTRA_SECRET_LEN) {
+            return "Extra Secret must be at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters"
+        }
+        if (e != c) return "Extra Secret confirmation does not match"
+        prefs.extraSecret = e
+        refreshFromPrefs()
+        if (prefs.receiveEnabled) {
+            ReceiveForegroundService.ensure(getApplication())
+        }
+        return null
+    }
+
+    fun setDefaultExtraSecret(extra: String, confirm: String): String? {
+        val e = extra.trim()
+        val c = confirm.trim()
+        if (e.isEmpty()) {
+            prefs.defaultExtraSecret = ""
+            refreshFromPrefs()
+            return null
+        }
+        if (e.length < ReceiverEndpoint.MIN_EXTRA_SECRET_LEN) {
+            return "Extra Secret must be at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters"
+        }
+        if (e != c) return "Extra Secret confirmation does not match"
+        prefs.defaultExtraSecret = e
+        refreshFromPrefs()
+        return null
+    }
+
+    fun setEndpointExtraSecret(id: String, extra: String, confirm: String): String? {
+        val e = extra.trim()
+        val c = confirm.trim()
+        if (e.isNotEmpty()) {
+            if (e.length < ReceiverEndpoint.MIN_EXTRA_SECRET_LEN) {
+                return "Extra Secret must be at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters"
+            }
+            if (e != c) return "Extra Secret confirmation does not match"
+        }
+        val err = prefs.setEndpointExtraSecret(id, e)
+        if (err != null) return err
+        refreshFromPrefs()
+        return null
+    }
+
+    fun snoozeBatteryBanner() {
+        prefs.snoozeBatteryBanner(7)
+        refreshFromPrefs()
     }
 
     fun verifySenderPairing(onDone: ((ok: Boolean, detail: String) -> Unit)? = null) {
@@ -174,8 +259,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         pairVerifyJob?.cancel()
         pairVerifyJob = viewModelScope.launch {
             _state.update { it.copy(pairCheckInProgress = true) }
-            val result = withContext(Dispatchers.IO) {
-                ForwardClient.healthAll(getApplication(), enabled)
+            val ctx = getApplication<Application>()
+            val (result, statusMap) = withContext(Dispatchers.IO) {
+                val failures = mutableSetOf<String>()
+                var ok = 0
+                val status = mutableMapOf<String, EndpointDeliveryStatus>()
+                val dao = app.database.outboxDao()
+                for (ep in enabled) {
+                    val reachable = ForwardClient.health(ctx, ep.host, ep.port).isSuccess
+                    if (reachable) ok++ else failures.add(ep.displayName)
+                    val pending = dao.pendingCountsByEndpoint()
+                        .firstOrNull { it.endpointId == ep.id }?.cnt ?: 0
+                    val errRow = dao.latestErrorForEndpoint(ep.id)
+                    val syncedAt = dao.lastSyncedAt(ep.id)
+                    status[ep.id] = EndpointDeliveryStatus(
+                        endpointId = ep.id,
+                        reachable = reachable,
+                        pendingCount = pending,
+                        lastError = errRow?.lastError,
+                        lastSyncedAt = syncedAt
+                    )
+                }
+                FanoutResult(ok, enabled.size, failures.toList()) to status
             }
             _state.update {
                 it.copy(
@@ -183,7 +288,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     reachable = result.anyOk,
                     reachableCount = result.ok,
                     endpointCount = result.total,
-                    paired = prefs.endpointConfigured
+                    paired = prefs.endpointConfigured,
+                    endpointStatus = statusMap
                 )
             }
             onDone?.invoke(
@@ -268,21 +374,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return "Update required before listening"
         }
         prefs.receiveEnabled = enabled
-        // #region agent log
         AgentDebugLog.log(
-            hypothesisId = "H6",
+            hypothesisId = "H_ON",
             location = "MainViewModel.setReceiveEnabled",
             message = "Listening port toggled",
-            data = mapOf(
-                "enabled" to enabled,
-                "listenFlag" to com.smsforwarder.app.data.ListenFlag.read(context),
-                "role" to prefs.role.name,
-                "vpn" to LanNetwork.vpnActive(context),
-                "lanIp" to (LanNetwork.ipv4(context) ?: "null")
-            ),
-            runId = "sync-debug"
+            data = mapOf("enabled" to enabled),
+            runId = "listen-toggle"
         )
-        // #endregion
         if (enabled) {
             prefs.paired = true
             ReceiveForegroundService.start(context)
@@ -293,11 +391,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ReceiveForegroundService.stop(context)
         }
         refreshFromPrefs()
+        StatusWidgetProvider.requestUpdate(getApplication())
         return null
     }
 
-    fun applyPairing(info: PairingInfo, onVerified: ((ok: Boolean, detail: String) -> Unit)? = null) {
-        val err = prefs.upsertEndpoint(info.secret, info.host, info.port)
+    fun applyPairing(
+        info: PairingInfo,
+        extraSecret: String? = null,
+        onVerified: ((ok: Boolean, detail: String) -> Unit)? = null
+    ) {
+        val err = prefs.upsertEndpoint(
+            info.secret,
+            info.host,
+            info.port,
+            extraSecret = extraSecret
+        )
         refreshFromPrefs()
         if (err != null) {
             onVerified?.invoke(false, err)
@@ -311,6 +419,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         host: String,
         portText: String,
         secret: String,
+        extraSecret: String = "",
         onVerified: ((ok: Boolean, detail: String) -> Unit)? = null
     ): String? {
         val h = host.trim()
@@ -319,7 +428,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (h.isBlank()) return "Enter receiver IP (shown on receiver phone)"
         if (s.length < 16) return "Secret too short — copy from receiver or scan QR"
         if (p !in 1..65535) return "Port out of range"
-        val err = prefs.upsertEndpoint(s, h, p)
+        val extra = extraSecret.trim()
+        if (extra.isNotEmpty() && extra.length < ReceiverEndpoint.MIN_EXTRA_SECRET_LEN) {
+            return "Extra Secret must be at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters"
+        }
+        val err = prefs.upsertEndpoint(s, h, p, extraSecret = extra)
         if (err != null) return err
         refreshFromPrefs()
         if (prefs.senderEnabled) startSenderKeepAlive()

@@ -28,6 +28,13 @@ class DesktopPrefs {
             props.setProperty("sharedSecret", value)
         }
 
+    /** Passphrase combined with QR secret; blank = legacy. Never put in pair link. */
+    var extraSecret: String
+        get() = props.getProperty("extraSecret", "")
+        set(value) {
+            props.setProperty("extraSecret", value)
+        }
+
     var port: Int
         get() = props.getProperty("port", "18765").toIntOrNull() ?: 18765
         set(value) {

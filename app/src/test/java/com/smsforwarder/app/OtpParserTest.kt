@@ -1,5 +1,6 @@
 package com.smsforwarder.app
 
+import com.smsforwarder.app.net.PayloadCrypto
 import com.smsforwarder.app.otp.OtpParser
 import com.smsforwarder.app.security.Auth
 import org.junit.Assert.assertEquals
@@ -124,5 +125,22 @@ rojinkala.com
         val sig = Auth.sign(secret, ts, "+15551212", "hello")
         assertTrue(Auth.verify(secret, ts, "+15551212", "hello", sig))
         assertFalse(Auth.verify(secret, ts, "+15551212", "HELLO", sig))
+    }
+
+    @Test
+    fun effectiveSecretLegacyUnchanged() {
+        assertEquals("qr-secret", PayloadCrypto.effectiveSecret("qr-secret", ""))
+        assertEquals("qr-secret", PayloadCrypto.effectiveSecret("qr-secret", "   "))
+    }
+
+    @Test
+    fun effectiveSecretCombinesExtra() {
+        val a = PayloadCrypto.effectiveSecret("qr", "passphrase1")
+        val b = PayloadCrypto.effectiveSecret("qr", "passphrase1")
+        val c = PayloadCrypto.effectiveSecret("qr", "passphrase2")
+        assertEquals(a, b)
+        assertTrue(a.length == 64)
+        assertFalse(a == c)
+        assertFalse(a == "qr")
     }
 }

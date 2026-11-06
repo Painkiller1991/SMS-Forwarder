@@ -12,6 +12,17 @@ object PayloadCrypto {
     private const val GCM_TAG_BITS = 128
     private const val IV_BYTES = 12
 
+    /**
+     * Derives the wire secret used by AES-GCM and HMAC.
+     * Legacy (blank extra): returns [qrSecret] unchanged so old peers keep working.
+     * With Extra Secret: SHA-256(qrSecret + "\n" + extraSecret) as lowercase hex.
+     */
+    fun effectiveSecret(qrSecret: String, extraSecret: String = ""): String {
+        val extra = extraSecret.trim()
+        if (extra.isEmpty()) return qrSecret
+        return sha256Hex(qrSecret + "\n" + extra)
+    }
+
     fun topicForSecret(secret: String): String {
         val hash = sha256Hex(secret).take(32)
         return "smsfw/v1/$hash"

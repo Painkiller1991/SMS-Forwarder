@@ -86,25 +86,17 @@ class ReceiveForegroundService : Service() {
             tearDownFully()
             return START_NOT_STICKY
         }
-        // #region agent log
-        val lan = LanNetwork.resolve(this)
         AgentDebugLog.log(
-            hypothesisId = "H6",
+            hypothesisId = "H_ON",
             location = "ReceiveForegroundService.onStartCommand",
             message = "Service start command",
             data = mapOf(
                 "action" to (intent?.action ?: "START"),
                 "listenOn" to listenOn,
-                "serverUp" to (server != null),
-                "vpn" to LanNetwork.vpnActive(this),
-                "lanIp" to (lan?.ipv4 ?: "null"),
-                "title" to statusTitle(),
-                "statusText" to listeningStatus(),
-                "pid" to android.os.Process.myPid()
+                "serverUp" to (server != null)
             ),
-            runId = "sync-debug"
+            runId = "listen-toggle"
         )
-        // #endregion
         when (intent?.action) {
             ACTION_TEARDOWN -> {
                 tearDownFully()
@@ -345,7 +337,8 @@ class ReceiveForegroundService : Service() {
                         hostname = host,
                         port = ReceiveServer.DEFAULT_PORT,
                         sharedSecretProvider = {
-                            SecretStore.read(this) ?: prefs.sharedSecret
+                            val qr = SecretStore.read(this) ?: prefs.sharedSecret
+                            PayloadCrypto.effectiveSecret(qr, prefs.extraSecret)
                         },
                         onSms = { sender, body, timestamp, msgId, quiet, test ->
                             handleIncoming(app, sender, body, timestamp, msgId, quiet, test)

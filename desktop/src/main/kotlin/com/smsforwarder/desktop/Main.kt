@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -42,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Notification
@@ -189,7 +191,45 @@ private fun ReceiverApp(
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.bodySmall
                 )
+                var extraDraft by remember { mutableStateOf(prefs.extraSecret) }
+                var extraConfirm by remember { mutableStateOf(prefs.extraSecret) }
+                var extraError by remember { mutableStateOf<String?>(null) }
+                OutlinedTextField(
+                    value = extraDraft,
+                    onValueChange = { extraDraft = it },
+                    label = { Text("Extra Secret (≥8, blank = legacy)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = extraConfirm,
+                    onValueChange = { extraConfirm = it },
+                    label = { Text("Confirm Extra Secret") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            val e = extraDraft.trim()
+                            val c = extraConfirm.trim()
+                            when {
+                                e.isNotEmpty() && e.length < 8 ->
+                                    extraError = "Extra Secret must be at least 8 characters"
+                                e != c ->
+                                    extraError = "Confirmation does not match"
+                                else -> {
+                                    prefs.extraSecret = e
+                                    prefs.save()
+                                    extraError = null
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Save Extra Secret")
+                    }
                     OutlinedButton(
                         onClick = {
                             copyText(prefs.pairingPayload(controller.localIp.ifBlank { "0.0.0.0" }))
@@ -214,8 +254,11 @@ private fun ReceiverApp(
                         Text(if (dark) "Light" else "Dark")
                     }
                 }
+                extraError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
                 Text(
-                    "On the Android sender: scan QR or paste IP / port / secret. Allow Windows Firewall for this app on Private networks.",
+                    "On the Android sender: scan QR or paste IP / port / secret, and set the same Extra Secret. Allow Windows Firewall for this app on Private networks.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
