@@ -30,15 +30,50 @@ class SenderKeepAliveService : Service() {
     private val debounceDrain = Runnable {
         SmsForwardService.drain(applicationContext)
     }
+    /** Only while pending lag exists — backoff, not a fixed 30s poll. */
+    private var lagBackoffMs = LAG_RETRY_MIN_MS
+    private val lagRetryDrain = Runnable {
+        val pending = pendingCount()
+        if (pending <= 0) {
+            lagBackoffMs = LAG_RETRY_MIN_MS
+            return@Runnable
+        }
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "LAG",
+            location = "SenderKeepAliveService.lagRetry",
+            message = "Lag retry drain",
+            data = mapOf("pending" to pending, "backoffMs" to lagBackoffMs),
+            runId = "drain-debug"
+        )
+        // #endregion
+        SmsForwardService.drain(applicationContext)
+        // Next attempt only if still lagging (OUTBOX_CHANGED / drain end re-schedules).
+        scheduleLagRetryAfterDrain()
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            unregisterLanCallback()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                unregisterLanCallback()
+                handler.removeCallbacks(debounceDrain)
+                handler.removeCallbacks(lagRetryDrain)
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            ACTION_PENDING_LAGGING -> {
+                // Drain finished with leftover pending — schedule lagged retry.
+                scheduleLagRetry(resetBackoff = false)
+                return START_STICKY
+            }
+            ACTION_PENDING_CLEARED -> {
+                handler.removeCallbacks(lagRetryDrain)
+                lagBackoffMs = LAG_RETRY_MIN_MS
+                return START_STICKY
+            }
         }
         AgentDebugLog.log(
             hypothesisId = "KEEPALIVE",
@@ -69,20 +104,49 @@ class SenderKeepAliveService : Service() {
     override fun onDestroy() {
         unregisterLanCallback()
         handler.removeCallbacks(debounceDrain)
+        handler.removeCallbacks(lagRetryDrain)
         super.onDestroy()
     }
 
+    private fun pendingCount(): Int {
+        val app = application as? SmsForwarderApp ?: return 0
+        return runBlocking { app.database.outboxDao().pendingCount() }
+    }
+
     private fun maybeDrainPending() {
-        val app = application as? SmsForwarderApp ?: return
-        val pending = runBlocking { app.database.outboxDao().pendingCount() }
-        if (pending > 0) {
+        if (pendingCount() > 0) {
             SmsForwardService.drain(this)
+            scheduleLagRetryAfterDrain()
         }
     }
 
     private fun scheduleDrain() {
         handler.removeCallbacks(debounceDrain)
         handler.postDelayed(debounceDrain, DRAIN_DEBOUNCE_MS)
+        // Network came back — retry soon, reset backoff.
+        scheduleLagRetry(resetBackoff = true)
+    }
+
+    private fun scheduleLagRetryAfterDrain() {
+        handler.postDelayed({
+            if (pendingCount() > 0) scheduleLagRetry(resetBackoff = false)
+            else {
+                handler.removeCallbacks(lagRetryDrain)
+                lagBackoffMs = LAG_RETRY_MIN_MS
+            }
+        }, 500L)
+    }
+
+    private fun scheduleLagRetry(resetBackoff: Boolean) {
+        if (resetBackoff) lagBackoffMs = LAG_RETRY_MIN_MS
+        if (pendingCount() <= 0) {
+            handler.removeCallbacks(lagRetryDrain)
+            lagBackoffMs = LAG_RETRY_MIN_MS
+            return
+        }
+        handler.removeCallbacks(lagRetryDrain)
+        handler.postDelayed(lagRetryDrain, lagBackoffMs)
+        lagBackoffMs = (lagBackoffMs * 2).coerceAtMost(LAG_RETRY_MAX_MS)
     }
 
     private fun registerLanCallback() {
@@ -151,7 +215,13 @@ class SenderKeepAliveService : Service() {
         private const val TAG = "SenderKeepAlive"
         private const val NOTIFICATION_ID = 43
         private const val DRAIN_DEBOUNCE_MS = 400L
+        /** First retry after a failed/partial drain (lag). */
+        /** Slow start when peer is down — avoid hammering 2s timeouts. */
+        private const val LAG_RETRY_MIN_MS = 8_000L
+        private const val LAG_RETRY_MAX_MS = 120_000L
         const val ACTION_STOP = "com.smsforwarder.app.STOP_SENDER_KEEPALIVE"
+        const val ACTION_PENDING_LAGGING = "com.smsforwarder.app.PENDING_LAGGING"
+        const val ACTION_PENDING_CLEARED = "com.smsforwarder.app.PENDING_CLEARED"
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(
@@ -168,6 +238,23 @@ class SenderKeepAliveService : Service() {
 
         fun ensure(context: Context) {
             start(context)
+        }
+
+        fun notifyPendingLagging(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, SenderKeepAliveService::class.java).apply {
+                    action = ACTION_PENDING_LAGGING
+                }
+            )
+        }
+
+        fun notifyPendingCleared(context: Context) {
+            context.startService(
+                Intent(context, SenderKeepAliveService::class.java).apply {
+                    action = ACTION_PENDING_CLEARED
+                }
+            )
         }
     }
 }

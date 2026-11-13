@@ -109,6 +109,11 @@
             android:process=":send"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Required for enableMultiInstanceInvalidation() across :send / UI processes -->
+        <service
+            android:name="androidx.room.MultiInstanceInvalidationService"
+            android:exported="false" />
+
         <service
             android:name=".autofill.SmsOtpAutofillService"
             android:exported="true"

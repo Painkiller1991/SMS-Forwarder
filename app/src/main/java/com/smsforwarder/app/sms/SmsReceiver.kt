@@ -40,7 +40,22 @@ class SmsReceiver : BroadcastReceiver() {
             runId = "mqtt"
         )
         // #endregion
-        if (prefs.role != AppRole.SENDER || !prefs.senderEnabled || !prefs.endpointConfigured) return
+        if (prefs.role != AppRole.SENDER || !prefs.senderEnabled || !prefs.endpointConfigured) {
+            // #region agent log
+            AgentDebugLog.log(
+                hypothesisId = "H5",
+                location = "SmsReceiver.onReceive:blocked",
+                message = "SMS ignored by sender gate",
+                data = mapOf(
+                    "role" to prefs.role.name,
+                    "senderEnabled" to prefs.senderEnabled,
+                    "endpointConfigured" to prefs.endpointConfigured
+                ),
+                runId = "drain-debug"
+            )
+            // #endregion
+            return
+        }
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return
         if (messages.isEmpty()) return
@@ -49,6 +64,15 @@ class SmsReceiver : BroadcastReceiver() {
         val body = messages.joinToString(separator = "") { it.displayMessageBody.orEmpty() }
         val timestamp = messages.firstOrNull()?.timestampMillis ?: System.currentTimeMillis()
 
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H5",
+            location = "SmsReceiver.onReceive:enqueue",
+            message = "Real SMS → outbox enqueue",
+            data = mapOf("sender" to sender.take(24), "bodyLen" to body.length),
+            runId = "drain-debug"
+        )
+        // #endregion
         Log.i(TAG, "Enqueue MQTT forward from $sender")
         SmsForwardService.enqueue(context, sender, body, timestamp)
     }

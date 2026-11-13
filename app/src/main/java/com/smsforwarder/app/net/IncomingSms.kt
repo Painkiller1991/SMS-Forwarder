@@ -72,8 +72,9 @@ object IncomingSms {
                 if (!wrote) {
                     Log.w(TAG, "OtpStore write verify failed")
                 }
+                // Delay clipboard so autofill popup can appear first.
                 if (!quiet) {
-                    InboxNotifier.requestCopyOtp(app, otp)
+                    InboxNotifier.requestCopyOtp(app, otp, delayMs = 2_500L)
                 }
             }
             dao.insert(

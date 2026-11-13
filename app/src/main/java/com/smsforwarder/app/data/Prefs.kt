@@ -58,8 +58,14 @@ class Prefs(context: Context) {
      * Never included in QR / pairing payload.
      */
     var extraSecret: String
-        get() = sp.getString(KEY_EXTRA_SECRET, "").orEmpty()
+        get() {
+            ExtraSecretStore.read(appContext)?.let { return it }
+            val fromSp = sp.getString(KEY_EXTRA_SECRET, "").orEmpty()
+            ExtraSecretStore.write(appContext, fromSp)
+            return fromSp
+        }
         set(value) {
+            ExtraSecretStore.write(appContext, value)
             sp.edit().putString(KEY_EXTRA_SECRET, value).commit()
         }
 
@@ -128,11 +134,49 @@ class Prefs(context: Context) {
     val endpoints: List<ReceiverEndpoint>
         get() {
             migrateLegacyEndpointIfNeeded()
-            return ReceiverEndpoint.listFromJson(sp.getString(KEY_ENDPOINTS, null))
+            // Prefer file (fresh across :send/:recv); SharedPreferences cache can be stale.
+            val fromFile = EndpointStore.read(appContext)
+            if (fromFile != null) {
+                return ReceiverEndpoint.listFromJson(fromFile)
+            }
+            val fromSp = sp.getString(KEY_ENDPOINTS, null)
+            if (fromSp != null) {
+                EndpointStore.write(appContext, fromSp)
+            }
+            return ReceiverEndpoint.listFromJson(fromSp)
         }
 
     fun enabledEndpoints(): List<ReceiverEndpoint> =
         endpoints.filter { it.enabled && it.isValid() }
+
+    /**
+     * Seed file mirrors only when missing (do not overwrite — :send SP cache may be stale).
+     */
+    fun ensureCrossProcessStoresSeeded() {
+        migrateLegacyEndpointIfNeeded()
+        if (EndpointStore.read(appContext) == null) {
+            EndpointStore.write(appContext, sp.getString(KEY_ENDPOINTS, null) ?: "[]")
+        }
+        ExtraSecretStore.write(appContext, "")
+    }
+
+    /** UI process only: push endpoints file so :send/:recv see current pairing. */
+    fun rewriteCrossProcessStoresFromUi() {
+        migrateLegacyEndpointIfNeeded()
+        EndpointStore.write(appContext, sp.getString(KEY_ENDPOINTS, null) ?: "[]")
+        ExtraSecretStore.write(appContext, "")
+    }
+
+    /** Extra Secret feature removed — wipe stored passphrases (QR secret only). */
+    fun stripAllExtraSecrets() {
+        sp.edit()
+            .putString(KEY_EXTRA_SECRET, "")
+            .putString(KEY_DEFAULT_EXTRA_SECRET, "")
+            .commit()
+        ExtraSecretStore.write(appContext, "")
+        // Always rewrite endpoints so :send file mirror cannot keep a non-empty extra.
+        persistEndpoints(endpoints.map { it.copy(extraSecret = "") })
+    }
 
     /**
      * True when at least one enabled sender endpoint is configured.
@@ -142,9 +186,11 @@ class Prefs(context: Context) {
         get() = enabledEndpoints().isNotEmpty()
 
     private fun persistEndpoints(list: List<ReceiverEndpoint>) {
+        val json = ReceiverEndpoint.listToJson(list)
+        EndpointStore.write(appContext, json)
         val first = list.firstOrNull { it.enabled && it.isValid() } ?: list.firstOrNull()
         val editor = sp.edit()
-            .putString(KEY_ENDPOINTS, ReceiverEndpoint.listToJson(list))
+            .putString(KEY_ENDPOINTS, json)
             .putBoolean(KEY_PAIRED, list.any { it.enabled && it.isValid() })
         if (first != null) {
             editor
@@ -169,10 +215,13 @@ class Prefs(context: Context) {
                     enabled = true
                 )
             )
+            val json = ReceiverEndpoint.listToJson(migrated)
+            EndpointStore.write(appContext, json)
             sp.edit()
-                .putString(KEY_ENDPOINTS, ReceiverEndpoint.listToJson(migrated))
+                .putString(KEY_ENDPOINTS, json)
                 .commit()
         } else {
+            EndpointStore.write(appContext, "[]")
             sp.edit().putString(KEY_ENDPOINTS, "[]").commit()
         }
     }
@@ -195,18 +244,10 @@ class Prefs(context: Context) {
         val current = endpoints.toMutableList()
         val key = "${h.lowercase()}:$port"
         val idx = current.indexOfFirst { it.addressKey == key }
-        val resolvedExtra = when {
-            extraSecret != null -> extraSecret
-            idx >= 0 -> current[idx].extraSecret
-            else -> defaultExtraSecret
-        }.trim()
-        if (resolvedExtra.isNotEmpty() && resolvedExtra.length < ReceiverEndpoint.MIN_EXTRA_SECRET_LEN) {
-            return "Extra Secret must be at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters"
-        }
         if (idx >= 0) {
             current[idx] = current[idx].copy(
                 secret = s,
-                extraSecret = resolvedExtra,
+                extraSecret = "",
                 label = label.ifBlank { current[idx].label },
                 enabled = true
             )
@@ -219,7 +260,7 @@ class Prefs(context: Context) {
                     host = h,
                     port = port,
                     secret = s,
-                    extraSecret = resolvedExtra,
+                    extraSecret = "",
                     enabled = true,
                     label = label
                 )

@@ -1,11 +1,11 @@
-﻿{
-  "versionCode": 51,
-  "versionName": "3.1.26-lan",
-  "apkAsset": "SMS-Forwarder-3.1.26-lan.apk",
+{
+  "versionCode": 58,
+  "versionName": "3.1.33-lan",
+  "apkAsset": "SMS-Forwarder-3.1.33-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "No shared Wi-Fi? Start a local hotspot on the sender, join on the receiver, pair with the same QR/LAN method",
-    "In-app local hotspot Start/Stop with SSID/password (system Hotspot fallback)",
-    "Better Soft AP / hotspot LAN socket binding for sender"
+    "Fix pending count stuck in UI after :send already synced (file mirror)",
+    "Hide stale Unreachable/timeout when /health is OK",
+    "Force-wipe Extra Secret leftovers; slower lag retry when peer is down"
   ]
 }

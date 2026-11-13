@@ -337,8 +337,8 @@ class ReceiveForegroundService : Service() {
                         hostname = host,
                         port = ReceiveServer.DEFAULT_PORT,
                         sharedSecretProvider = {
-                            val qr = SecretStore.read(this) ?: prefs.sharedSecret
-                            PayloadCrypto.effectiveSecret(qr, prefs.extraSecret)
+                            // QR secret only (Extra Secret feature removed).
+                            SecretStore.read(this) ?: prefs.sharedSecret
                         },
                         onSms = { sender, body, timestamp, msgId, quiet, test ->
                             handleIncoming(app, sender, body, timestamp, msgId, quiet, test)

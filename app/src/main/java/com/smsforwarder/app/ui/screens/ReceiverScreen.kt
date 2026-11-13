@@ -51,12 +51,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.smsforwarder.app.tile.QsTileHelper
 import com.smsforwarder.app.data.DayBoundary
 import com.smsforwarder.app.data.MessageEntity
-import com.smsforwarder.app.data.ReceiverEndpoint
 import com.smsforwarder.app.data.ThemeMode
 import com.smsforwarder.app.net.ReceiveServer
 import com.smsforwarder.app.otp.OtpParser
@@ -92,7 +90,6 @@ fun ReceiverScreen(
     onTestSend: () -> Unit,
     onBatteryUnrestricted: () -> Unit,
     onSnoozeBatteryBanner: () -> Unit,
-    onSetExtraSecret: (extra: String, confirm: String) -> String?,
     onCopyAddress: () -> Unit,
     onThemeMode: (ThemeMode) -> Unit,
     onSendDebugPing: () -> Unit,
@@ -107,7 +104,6 @@ fun ReceiverScreen(
     var expandedMessageId by remember { mutableStateOf<Long?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var inboxFilter by remember { mutableStateOf(InboxFilter.ALL) }
-    var showExtraDialog by remember { mutableStateOf(false) }
     var showOemGuide by remember { mutableStateOf(false) }
     var showTileHelp by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -137,53 +133,6 @@ fun ReceiverScreen(
         filtered.filter { !it.pinned && it.receivedAt >= dayStart }
     }
     val showBattery = needsBatteryUnrestricted && !state.batteryBannerSnoozed
-
-    if (showExtraDialog) {
-        var draft by remember { mutableStateOf(state.extraSecret) }
-        var confirm by remember { mutableStateOf(state.extraSecret) }
-        var err by remember { mutableStateOf<String?>(null) }
-        AlertDialog(
-            onDismissRequest = { showExtraDialog = false },
-            title = { Text("Extra Secret") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Passphrase both phones must know. Not included in the QR. " +
-                            "New pairings: at least ${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN} characters. " +
-                            "Leave blank only to keep working with legacy peers.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = draft,
-                        onValueChange = { draft = it },
-                        label = { Text("Extra Secret") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = confirm,
-                        onValueChange = { confirm = it },
-                        label = { Text("Confirm") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    err?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val e = onSetExtraSecret(draft, confirm)
-                    if (e != null) err = e else showExtraDialog = false
-                }) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showExtraDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
 
     if (showOemGuide) {
         OemBatteryGuideDialog(
@@ -276,16 +225,6 @@ fun ReceiverScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    if (state.extraSecret.isNotEmpty()) {
-                        "Extra Secret: set (${state.extraSecret.length} chars)"
-                    } else {
-                        "Extra Secret: not set (legacy QR-only)"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             item {
@@ -400,12 +339,6 @@ fun ReceiverScreen(
                     )
                     Spacer(Modifier.height(4.dp))
                     ActionRow(
-                        icon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                        title = if (state.extraSecret.isNotEmpty()) "Edit Extra Secret" else "Set Extra Secret",
-                        onClick = { showExtraDialog = true }
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    ActionRow(
                         icon = { Icon(Icons.Default.Widgets, contentDescription = null) },
                         title = "Add home widget (Widgets list)",
                         onClick = { showTileHelp = true }
@@ -453,7 +386,7 @@ fun ReceiverScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Pairing QR", fontWeight = FontWeight.SemiBold)
                             Text(
-                                if (qrBitmap != null) "Show this to the sender phone (Extra Secret is not in the QR)"
+                                if (qrBitmap != null) "Show this to the sender phone"
                                 else "Connect to Wi‑Fi to show QR",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant

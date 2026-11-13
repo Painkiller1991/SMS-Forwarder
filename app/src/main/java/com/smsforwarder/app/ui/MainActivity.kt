@@ -350,8 +350,8 @@ private fun AppRoot(
                     }
                 }
             },
-            onSaveEndpoint = { host, port, secret, extraSecret ->
-                val err = vm.saveManualEndpoint(host, port, secret, extraSecret) { _, detail ->
+            onSaveEndpoint = { host, port, secret ->
+                val err = vm.saveManualEndpoint(host, port, secret) { _, detail ->
                     Toast.makeText(activity, detail, Toast.LENGTH_LONG).show()
                 }
                 if (err != null) {
@@ -360,17 +360,9 @@ private fun AppRoot(
             },
             onRemoveEndpoint = { id -> vm.removeEndpoint(id) },
             onToggleEndpoint = { id, enabled -> vm.setEndpointEnabled(id, enabled) },
-            onSetEndpointExtraSecret = { id, extra, confirm ->
-                val err = vm.setEndpointExtraSecret(id, extra, confirm)
-                if (err != null) Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
-                else Toast.makeText(activity, "Extra Secret saved", Toast.LENGTH_SHORT).show()
-                err
-            },
-            onSetDefaultExtraSecret = { extra, confirm ->
-                val err = vm.setDefaultExtraSecret(extra, confirm)
-                if (err != null) Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
-                else Toast.makeText(activity, "Default Extra Secret saved", Toast.LENGTH_SHORT).show()
-                err
+            onDiscardPending = {
+                vm.discardPendingSync()
+                Toast.makeText(activity, "Pending messages discarded", Toast.LENGTH_SHORT).show()
             },
             onRequestSmsPermission = { requestSenderPermissions() },
             onTestSend = {
@@ -468,12 +460,6 @@ private fun AppRoot(
                     onSnoozeBatteryBanner = {
                         vm.snoozeBatteryBanner()
                         Toast.makeText(activity, "Battery reminder snoozed 7 days", Toast.LENGTH_SHORT).show()
-                    },
-                    onSetExtraSecret = { extra, confirm ->
-                        val err = vm.setReceiverExtraSecret(extra, confirm)
-                        if (err != null) Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
-                        else Toast.makeText(activity, "Extra Secret saved", Toast.LENGTH_SHORT).show()
-                        err
                     },
                     onCopyAddress = {
                         val ip = state.localIp

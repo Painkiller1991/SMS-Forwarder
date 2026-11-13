@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Inline suggestions require InlinePresentation; without it many OEMs show nothing. -->
 <autofill-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:settingsActivity="com.smsforwarder.app.ui.MainActivity"
-    android:supportsInlineSuggestions="true" />
+    android:supportsInlineSuggestions="false" />

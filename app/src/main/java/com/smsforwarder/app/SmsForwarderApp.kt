@@ -26,6 +26,9 @@ class SmsForwarderApp : Application() {
         prefs = Prefs(this)
         otpStore = OtpStore(this)
         AgentDebugLog.init(this)
+        // Seed endpoint files; wipe Extra Secret (feature removed — QR secret only).
+        prefs.ensureCrossProcessStoresSeeded()
+        prefs.stripAllExtraSecrets()
         installCrashLogger()
         createNotificationChannels()
         // #region agent log

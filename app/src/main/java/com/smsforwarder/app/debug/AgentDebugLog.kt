@@ -2,6 +2,7 @@ package com.smsforwarder.app.debug
 
 import android.content.Context
 import android.util.Log
+import com.smsforwarder.app.data.Prefs
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
@@ -13,15 +14,26 @@ import java.util.concurrent.Executors
  */
 object AgentDebugLog {
     private const val TAG = "AgentDebug"
-    private const val SESSION = "4fa2f1"
-    private const val LOG_FILE = "debug-4fa2f1.ndjson"
+    private const val SESSION = "d2c7ac"
+    private const val LOG_FILE = "debug-d2c7ac.ndjson"
     private val io = Executors.newSingleThreadExecutor()
 
     @Volatile
     private var appContext: Context? = null
 
+    @Volatile
+    private var roleHint: String = "?"
+
     fun init(context: Context) {
         appContext = context.applicationContext
+        refreshRole()
+    }
+
+    fun refreshRole() {
+        val ctx = appContext ?: return
+        roleHint = runCatching {
+            Prefs(ctx).role.name
+        }.getOrDefault("?")
     }
 
     fun logFile(context: Context = requireNotNull(appContext)): File {
@@ -53,8 +65,12 @@ object AgentDebugLog {
         runId: String = "pre-fix",
         onResult: ((ok: Boolean, detail: String) -> Unit)? = null
     ) {
+        if (roleHint == "?" || roleHint == "NONE") {
+            refreshRole()
+        }
         val payload = JSONObject()
             .put("sessionId", SESSION)
+            .put("role", roleHint)
             .put("runId", runId)
             .put("hypothesisId", hypothesisId)
             .put("location", location)

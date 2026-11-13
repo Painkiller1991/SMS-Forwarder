@@ -63,7 +63,7 @@ object LanNetwork {
 
     fun lanHttpClient(context: Context, preferredPeerHost: String? = null): OkHttpClient {
         val builder = OkHttpClient.Builder()
-            .connectTimeout(5, TimeUnit.SECONDS)
+            .connectTimeout(2, TimeUnit.SECONDS)
             .writeTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
         val path = resolve(context, preferredPeerHost) ?: return builder.build()

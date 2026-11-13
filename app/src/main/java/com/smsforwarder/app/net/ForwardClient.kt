@@ -36,6 +36,30 @@ data class FanoutResult(
 /** Local Wi‑Fi only — sockets bound to non-VPN LAN network when possible. */
 object ForwardClient {
     private val plainType = "text/plain; charset=utf-8".toMediaType()
+    /** Skip redundant /health when this peer just answered successfully. */
+    private const val HEALTH_CACHE_MS = 45_000L
+    @Volatile private var lastOkKey: String? = null
+    @Volatile private var lastOkAtMs: Long = 0L
+
+    private fun peerKey(host: String, port: Int) = "${host.trim().lowercase()}:$port"
+
+    private fun markPeerOk(host: String, port: Int) {
+        lastOkKey = peerKey(host, port)
+        lastOkAtMs = System.currentTimeMillis()
+    }
+
+    private fun clearPeerOk(host: String, port: Int) {
+        if (lastOkKey == peerKey(host, port)) {
+            lastOkKey = null
+            lastOkAtMs = 0L
+        }
+    }
+
+    private fun recentlyOk(host: String, port: Int): Boolean {
+        val key = peerKey(host, port)
+        return lastOkKey == key &&
+            System.currentTimeMillis() - lastOkAtMs < HEALTH_CACHE_MS
+    }
 
     fun health(context: Context, host: String, port: Int): Result<Unit> = runCatching {
         val client = LanNetwork.lanHttpClient(context, preferredPeerHost = host)
@@ -68,37 +92,46 @@ object ForwardClient {
         val wireSecret = PayloadCrypto.effectiveSecret(secret, extraSecret)
         val client = LanNetwork.lanHttpClient(context, preferredPeerHost = host)
         val url = "http://$host:$port/sms"
+        val skipHealth = recentlyOk(host, port)
+        // #region agent log
         AgentDebugLog.log(
-            hypothesisId = "H1",
+            hypothesisId = "H12",
             location = "ForwardClient.forward",
             message = "LAN POST starting",
             data = mapOf(
                 "url" to url,
                 "bodyLen" to body.length,
                 "msgId" to msgId.take(36),
-                "lanIp" to (LanNetwork.ipv4(context) ?: "none")
+                "lanIp" to (LanNetwork.ipv4(context) ?: "none"),
+                "skipHealth" to skipHealth,
+                "quiet" to quiet,
+                "test" to test
             ),
             runId = "lan-url"
         )
+        // #endregion
 
-        val health = health(context, host, port)
-        if (health.isFailure) {
-            val err = health.exceptionOrNull()
-            val kind = classify(err)
-            AgentDebugLog.log(
-                hypothesisId = "H1",
-                location = "ForwardClient.health",
-                message = "LAN health failed",
-                data = mapOf(
-                    "url" to "http://$host:$port/health",
-                    "kind" to kind,
-                    "error" to (err?.message?.take(120) ?: err?.javaClass?.simpleName)
-                ),
-                runId = "lan-url"
-            )
-            error(
-                "Cannot reach $host:$port ($kind). Same Wi‑Fi? VPN blocking LAN? Receive ON?"
-            )
+        if (!skipHealth) {
+            val health = health(context, host, port)
+            if (health.isFailure) {
+                val err = health.exceptionOrNull()
+                val kind = classify(err)
+                clearPeerOk(host, port)
+                AgentDebugLog.log(
+                    hypothesisId = "H1",
+                    location = "ForwardClient.health",
+                    message = "LAN health failed",
+                    data = mapOf(
+                        "url" to "http://$host:$port/health",
+                        "kind" to kind,
+                        "error" to (err?.message?.take(120) ?: err?.javaClass?.simpleName)
+                    ),
+                    runId = "lan-url"
+                )
+                error(
+                    "Cannot reach $host:$port ($kind). Same Wi‑Fi? VPN blocking LAN? Receive ON?"
+                )
+            }
         }
 
         val signature = Auth.sign(wireSecret, timestamp, sender, body)
@@ -124,15 +157,23 @@ object ForwardClient {
                 hypothesisId = "H3",
                 location = "ForwardClient.forward.response",
                 message = "LAN POST response",
-                data = mapOf("url" to url, "code" to response.code, "body" to respBody.take(80)),
+                data = mapOf(
+                    "url" to url,
+                    "code" to response.code,
+                    "body" to respBody.take(80),
+                    "skipHealth" to skipHealth
+                ),
                 runId = "lan-url"
             )
             if (!response.isSuccessful) {
+                clearPeerOk(host, port)
                 error("HTTP ${response.code}: $respBody")
             }
             if (!isAckOk(respBody)) {
+                clearPeerOk(host, port)
                 error("Bad ACK: ${respBody.take(80)}")
             }
+            markPeerOk(host, port)
         }
     }.fold(
         onSuccess = { Result.success(Unit) },
@@ -179,7 +220,7 @@ object ForwardClient {
             val ep = targets.first()
             val r = forward(
                 context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId,
-                quiet = quiet, test = test, extraSecret = ep.extraSecret
+                quiet = quiet, test = test, extraSecret = ""
             )
             return if (r.isSuccess) {
                 FanoutResult(1, 1, emptyList())
@@ -195,7 +236,7 @@ object ForwardClient {
                 pool.submit {
                     val r = forward(
                         context, ep.host, ep.port, ep.secret, sender, body, timestamp, msgId,
-                        quiet = quiet, test = test, extraSecret = ep.extraSecret
+                        quiet = quiet, test = test, extraSecret = ""
                     )
                     if (r.isSuccess) okCount.incrementAndGet()
                     else failures.add(ep.displayName)

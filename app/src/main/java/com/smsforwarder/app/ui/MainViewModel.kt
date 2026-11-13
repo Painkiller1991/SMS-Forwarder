@@ -1,11 +1,15 @@
 package com.smsforwarder.app.ui
 
 import android.app.Application
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.smsforwarder.app.SmsForwarderApp
@@ -13,6 +17,7 @@ import com.smsforwarder.app.data.AppRole
 import com.smsforwarder.app.data.DayBoundary
 import com.smsforwarder.app.data.EndpointDeliveryStatus
 import com.smsforwarder.app.data.MessageEntity
+import com.smsforwarder.app.data.OutboxPendingMirror
 import com.smsforwarder.app.data.ReceiverEndpoint
 import com.smsforwarder.app.data.ThemeMode
 import com.smsforwarder.app.debug.AgentDebugLog
@@ -88,17 +93,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val dayStartFlow = MutableStateFlow(DayBoundary.startOfTodayMillis())
     private val hotspot = LocalOnlyHotspotController(application)
     private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    private var outboxReceiver: BroadcastReceiver? = null
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
         registerWifiIdentityCallback()
+        registerOutboxChangedReceiver()
+        prefs.stripAllExtraSecrets()
         UpdateLock.clearIfSatisfied(prefs)
         if (UpdateLock.isActive(prefs)) {
             UpdateLock.engage(application, prefs, prefs.updateLockedVersionCode)
         }
         refreshFromPrefs()
+        viewModelScope.launch(Dispatchers.IO) {
+            app.database.outboxDao().clearPendingExtraSecrets()
+        }
         if (!UpdateLock.isActive(prefs)) {
             if (prefs.role == AppRole.RECEIVER) {
                 ReceiveForegroundService.ensure(application)
@@ -151,7 +162,90 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun drainOutbox(context: Context) {
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H4",
+            location = "MainViewModel.drainOutbox",
+            message = "Manual Sync tapped",
+            data = mapOf(
+                "pendingUi" to _state.value.pendingSyncCount,
+                "liveHost" to (prefs.enabledEndpoints().firstOrNull()?.host ?: "none")
+            ),
+            runId = "drain-debug"
+        )
+        // #endregion
         SmsForwardService.drain(context.applicationContext)
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(800)
+            refreshPendingCountFromDb()
+        }
+    }
+
+    /** Drop stuck pending rows (e.g. after re-pair when messages already arrived). */
+    fun discardPendingSync() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val n = app.database.outboxDao().deleteAllPending()
+            OutboxPendingMirror.write(getApplication(), 0)
+            // #region agent log
+            AgentDebugLog.log(
+                hypothesisId = "H15",
+                location = "MainViewModel.discardPendingSync",
+                message = "Discarded pending outbox",
+                data = mapOf("deleted" to n),
+                runId = "drain-debug"
+            )
+            // #endregion
+            refreshPendingCountFromDb()
+            StatusWidgetProvider.requestUpdate(getApplication())
+        }
+    }
+
+    private suspend fun refreshPendingCountFromDb() {
+        val count = withContext(Dispatchers.IO) {
+            val fromDb = app.database.outboxDao().pendingCount()
+            val fromMirror = OutboxPendingMirror.read(getApplication())
+            // Prefer mirror when :send already cleared and UI Room cache is stale.
+            when {
+                fromMirror != null && fromMirror == 0 && fromDb > 0 -> fromMirror
+                fromMirror != null && fromMirror < fromDb -> fromMirror
+                else -> fromDb
+            }.also { OutboxPendingMirror.write(getApplication(), it) }
+        }
+        _state.update { state ->
+            val status = state.endpointStatus.mapValues { (_, s) ->
+                if (count == 0) s.copy(pendingCount = 0, lastError = null) else s
+            }
+            state.copy(pendingSyncCount = count, endpointStatus = status)
+        }
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "H15",
+            location = "MainViewModel.refreshPendingCountFromDb",
+            message = "Pending count refreshed",
+            data = mapOf("pendingUi" to count),
+            runId = "drain-debug"
+        )
+        // #endregion
+    }
+
+    private fun registerOutboxChangedReceiver() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != SmsForwardService.ACTION_OUTBOX_CHANGED) return
+                viewModelScope.launch {
+                    refreshPendingCountFromDb()
+                    // Re-check LAN so chip/row match after catch-up.
+                    if (prefs.role == AppRole.SENDER) verifySenderPairing()
+                }
+            }
+        }
+        outboxReceiver = receiver
+        val filter = IntentFilter(SmsForwardService.ACTION_OUTBOX_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getApplication<Application>().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            getApplication<Application>().registerReceiver(receiver, filter)
+        }
     }
 
     fun refreshDayBoundary() {
@@ -164,6 +258,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshFromPrefs() {
         val ctx = getApplication<Application>()
+        // Push UI-process secrets to files so :send outbox drain matches Test.
+        prefs.rewriteCrossProcessStoresFromUi()
         val ip = WifiIp.localIpv4(ctx).orEmpty()
         val payload = if (ip.isNotBlank()) prefs.pairingPayload(ip) else ""
         val eps = prefs.endpoints
@@ -273,7 +369,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val err = prefs.setEndpointExtraSecret(id, e)
         if (err != null) return err
         refreshFromPrefs()
+        // Outbox must pick up blank/new Extra Secret in :send process.
+        if (prefs.senderEnabled) {
+            SmsForwardService.drain(getApplication())
+        }
         return null
+    }
+
+    /** Drop Extra Secret on every sender endpoint + default — QR secret only (legacy). */
+    fun clearAllExtraSecretsToLegacy() {
+        prefs.endpoints.forEach { prefs.setEndpointExtraSecret(it.id, "") }
+        prefs.defaultExtraSecret = ""
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "LEGACY",
+            location = "MainViewModel.clearAllExtraSecretsToLegacy",
+            message = "Cleared Extra Secrets → QR-only",
+            data = mapOf("endpoints" to prefs.endpoints.size),
+            runId = "extra-clear"
+        )
+        // #endregion
+        refreshFromPrefs()
+        if (prefs.senderEnabled) {
+            SmsForwardService.drain(getApplication())
+        }
+    }
+
+    /** Receiver: QR-only decrypt (must match sender after clear). */
+    fun clearReceiverExtraSecretToLegacy() {
+        prefs.extraSecret = ""
+        // #region agent log
+        AgentDebugLog.log(
+            hypothesisId = "LEGACY",
+            location = "MainViewModel.clearReceiverExtraSecretToLegacy",
+            message = "Receiver Extra Secret cleared → QR-only",
+            runId = "extra-clear"
+        )
+        // #endregion
+        refreshFromPrefs()
+        if (prefs.receiveEnabled) {
+            ReceiveForegroundService.ensure(getApplication())
+        }
     }
 
     fun snoozeBatteryBanner() {
@@ -311,10 +447,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val dao = app.database.outboxDao()
                 for (ep in enabled) {
                     val reachable = ForwardClient.health(ctx, ep.host, ep.port).isSuccess
-                    if (reachable) ok++ else failures.add(ep.displayName)
+                    if (reachable) {
+                        ok++
+                        // Don't keep flashing an old timeout once /health is green.
+                        dao.clearPendingErrorsForEndpoint(ep.id)
+                    } else {
+                        failures.add(ep.displayName)
+                    }
                     val pending = dao.pendingCountsByEndpoint()
                         .firstOrNull { it.endpointId == ep.id }?.cnt ?: 0
-                    val errRow = dao.latestErrorForEndpoint(ep.id)
+                    val errRow = if (reachable) null else dao.latestErrorForEndpoint(ep.id)
                     val syncedAt = dao.lastSyncedAt(ep.id)
                     status[ep.id] = EndpointDeliveryStatus(
                         endpointId = ep.id,
@@ -404,6 +546,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val cm = getApplication<Application>().getSystemService(ConnectivityManager::class.java)
         wifiNetworkCallback?.let { runCatching { cm?.unregisterNetworkCallback(it) } }
         wifiNetworkCallback = null
+        outboxReceiver?.let { runCatching { getApplication<Application>().unregisterReceiver(it) } }
+        outboxReceiver = null
         super.onCleared()
     }
 
@@ -607,6 +751,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     reachableCount = result.ok,
                     endpointCount = result.total
                 )
+            }
+            // Test bypasses outbox; once LAN works, drain stuck pending sync.
+            if (result.anyOk && _state.value.pendingSyncCount > 0) {
+                // #region agent log
+                AgentDebugLog.log(
+                    hypothesisId = "H4",
+                    location = "MainViewModel.testSendToReceiver.drain",
+                    message = "Test OK → drain pending outbox",
+                    data = mapOf("pendingUi" to _state.value.pendingSyncCount),
+                    runId = "drain-debug"
+                )
+                // #endregion
+                SmsForwardService.drain(getApplication())
             }
             onDone(result.anyOk, result.summary())
         }

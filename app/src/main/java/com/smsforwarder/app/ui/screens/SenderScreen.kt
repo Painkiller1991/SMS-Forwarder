@@ -23,7 +23,6 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Widgets
@@ -76,11 +75,10 @@ fun SenderScreen(
     needsBatteryUnrestricted: Boolean,
     onEnableChange: (Boolean) -> Unit,
     onScanQr: () -> Unit,
-    onSaveEndpoint: (host: String, port: String, secret: String, extraSecret: String) -> Unit,
+    onSaveEndpoint: (host: String, port: String, secret: String) -> Unit,
     onRemoveEndpoint: (String) -> Unit,
     onToggleEndpoint: (id: String, enabled: Boolean) -> Unit,
-    onSetEndpointExtraSecret: (id: String, extra: String, confirm: String) -> String?,
-    onSetDefaultExtraSecret: (extra: String, confirm: String) -> String?,
+    onDiscardPending: () -> Unit,
     onRequestSmsPermission: () -> Unit,
     onTestSend: () -> Unit,
     onBatteryUnrestricted: () -> Unit,
@@ -101,17 +99,11 @@ fun SenderScreen(
     var host by remember { mutableStateOf("") }
     var port by remember { mutableStateOf(ReceiveServer.DEFAULT_PORT.toString()) }
     var secret by remember { mutableStateOf("") }
-    var extraSecret by remember { mutableStateOf(state.defaultExtraSecret) }
-    var extraConfirm by remember { mutableStateOf(state.defaultExtraSecret) }
     var showPendingSync by remember { mutableStateOf(false) }
     var showOemGuide by remember { mutableStateOf(false) }
     var showTileHelp by remember { mutableStateOf(false) }
-    var editingExtraId by remember { mutableStateOf<String?>(null) }
-    var defaultExtraDraft by remember { mutableStateOf(state.defaultExtraSecret) }
-    var defaultExtraConfirm by remember { mutableStateOf(state.defaultExtraSecret) }
-    var formError by remember { mutableStateOf<String?>(null) }
     // Collapse setup sections when at least one receiver exists.
-    var defaultExtraExpanded by remember { mutableStateOf(state.endpoints.isEmpty()) }
+    var hotspotExpanded by remember { mutableStateOf(state.endpoints.isEmpty()) }
     var addDeviceExpanded by remember { mutableStateOf(state.endpoints.isEmpty()) }
     val pending = state.pendingSyncCount
     val showBattery = needsBatteryUnrestricted && !state.batteryBannerSnoozed
@@ -141,8 +133,19 @@ fun SenderScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showPendingSync = false }) {
-                    Text("Close")
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            onDiscardPending()
+                            showPendingSync = false
+                        },
+                        enabled = pending > 0
+                    ) {
+                        Text("Discard pending")
+                    }
+                    TextButton(onClick = { showPendingSync = false }) {
+                        Text("Close")
+                    }
                 }
             }
         )
@@ -201,56 +204,6 @@ fun SenderScreen(
         )
     }
 
-    editingExtraId?.let { id ->
-        val ep = state.endpoints.firstOrNull { it.id == id }
-        if (ep != null) {
-            var draft by remember(id) { mutableStateOf(ep.extraSecret) }
-            var confirm by remember(id) { mutableStateOf(ep.extraSecret) }
-            var err by remember { mutableStateOf<String?>(null) }
-            AlertDialog(
-                onDismissRequest = { editingExtraId = null },
-                title = { Text("Extra Secret — ${ep.displayName}") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "Must match the receiver’s Extra Secret. Leave blank only for legacy peers.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        OutlinedTextField(
-                            value = draft,
-                            onValueChange = { draft = it },
-                            label = { Text("Extra Secret") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        OutlinedTextField(
-                            value = confirm,
-                            onValueChange = { confirm = it },
-                            label = { Text("Confirm") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        err?.let {
-                            Text(it, color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        val e = onSetEndpointExtraSecret(id, draft, confirm)
-                        if (e != null) err = e else editingExtraId = null
-                    }) { Text("Save") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { editingExtraId = null }) { Text("Cancel") }
-                }
-            )
-        }
-    }
-
     AppShell(
         title = "Send mode",
         themeMode = state.themeMode,
@@ -280,7 +233,7 @@ fun SenderScreen(
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.SemiBold
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Button(onClick = onRequestSmsPermission, modifier = Modifier.fillMaxWidth()) {
                         Text("Grant SMS permission")
                     }
@@ -290,14 +243,14 @@ fun SenderScreen(
             if (showBattery) {
                 TonalCard {
                     Text("Background battery", fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         "Allow unrestricted battery so forwarding still works when the app is closed. " +
                             "Path: Apps → SMS Forwarder → Battery → Unrestricted.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     FilledTonalButton(
                         onClick = onBatteryUnrestricted,
                         modifier = Modifier.fillMaxWidth()
@@ -307,11 +260,11 @@ fun SenderScreen(
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text("Allow unrestricted battery", modifier = Modifier.weight(1f))
                         Icon(Icons.Default.ChevronRight, contentDescription = null)
                     }
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Row(modifier = Modifier.fillMaxWidth()) {
                         TextButton(onClick = onSnoozeBatteryBanner) {
                             Text("Later (7 days)")
@@ -322,24 +275,36 @@ fun SenderScreen(
                                 contentDescription = null,
                                 modifier = Modifier.size(16.dp)
                             )
-                            Spacer(Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text("OEM help")
                         }
                     }
                 }
             }
 
-            HotspotGuideCard(
-                isSender = true,
-                hotspotActive = state.hotspotActive,
-                hotspotSsid = state.hotspotSsid,
-                hotspotPassword = state.hotspotPassword,
-                hotspotError = state.hotspotError,
-                onStartHotspot = onStartHotspot,
-                onStopHotspot = onStopHotspot,
-                onOpenSystemHotspot = onOpenSystemHotspot,
-                onCopyCredentials = onCopyHotspotCredentials
-            )
+            CollapsibleCard(
+                title = "Hotspot",
+                subtitle = when {
+                    state.hotspotActive && state.hotspotSsid.isNotBlank() ->
+                        "ON · ${state.hotspotSsid}"
+                    else -> "Optional · when no shared Wi‑Fi"
+                },
+                expanded = hotspotExpanded,
+                onToggle = { hotspotExpanded = !hotspotExpanded }
+            ) {
+                HotspotGuideCard(
+                    isSender = true,
+                    hotspotActive = state.hotspotActive,
+                    hotspotSsid = state.hotspotSsid,
+                    hotspotPassword = state.hotspotPassword,
+                    hotspotError = state.hotspotError,
+                    onStartHotspot = onStartHotspot,
+                    onStopHotspot = onStopHotspot,
+                    onOpenSystemHotspot = onOpenSystemHotspot,
+                    onCopyCredentials = onCopyHotspotCredentials,
+                    embedded = true
+                )
+            }
 
             TonalCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -349,10 +314,10 @@ fun SenderScreen(
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
                     )
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text("Connection status", fontWeight = FontWeight.SemiBold)
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 StatusChip(
                     label = when {
                         state.pairCheckInProgress -> "Checking…"
@@ -363,19 +328,19 @@ fun SenderScreen(
                     active = state.reachable
                 )
                 if (pending > 0) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     StatusChip(
                         label = if (pending == 1) "1 pending sync" else "$pending pending sync",
                         active = true
                     )
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     "SMS is sent to every enabled device on the list.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -406,7 +371,7 @@ fun SenderScreen(
                     "Receivers",
                     "Up to ${ReceiverEndpoint.MAX_DEVICES} devices (phone, PC, …)"
                 )
-                Spacer(Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 if (state.endpoints.isEmpty()) {
                     Text(
                         "No devices yet — expand Add device below.",
@@ -422,63 +387,9 @@ fun SenderScreen(
                             endpoint = ep,
                             status = state.endpointStatus[ep.id],
                             onToggle = { onToggleEndpoint(ep.id, it) },
-                            onRemove = { onRemoveEndpoint(ep.id) },
-                            onEditExtra = { editingExtraId = ep.id }
+                            onRemove = { onRemoveEndpoint(ep.id) }
                         )
                     }
-                }
-            }
-
-            CollapsibleCard(
-                title = "Default Extra Secret",
-                subtitle = if (state.defaultExtraSecret.isNotEmpty()) {
-                    "Saved · applied to new pairings"
-                } else {
-                    "Optional · applied when pairing new devices"
-                },
-                expanded = defaultExtraExpanded,
-                onToggle = { defaultExtraExpanded = !defaultExtraExpanded }
-            ) {
-                Text(
-                    "Not stored in the QR. Leave blank only for legacy peers.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = defaultExtraDraft,
-                    onValueChange = { defaultExtraDraft = it },
-                    label = { Text("Extra Secret (≥${ReceiverEndpoint.MIN_EXTRA_SECRET_LEN})") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation()
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = defaultExtraConfirm,
-                    onValueChange = { defaultExtraConfirm = it },
-                    label = { Text("Confirm Extra Secret") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation()
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = {
-                        formError = onSetDefaultExtraSecret(defaultExtraDraft, defaultExtraConfirm)
-                        if (formError == null) {
-                            extraSecret = defaultExtraDraft
-                            extraConfirm = defaultExtraConfirm
-                            defaultExtraExpanded = false
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Save default Extra Secret")
-                }
-                formError?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
 
@@ -498,7 +409,7 @@ fun SenderScreen(
                     shape = MaterialTheme.shapes.medium,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 OutlinedTextField(
                     value = port,
                     onValueChange = { port = it.filter { c -> c.isDigit() }.take(5) },
@@ -508,7 +419,7 @@ fun SenderScreen(
                     shape = MaterialTheme.shapes.medium,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 OutlinedTextField(
                     value = secret,
                     onValueChange = { secret = it },
@@ -518,34 +429,11 @@ fun SenderScreen(
                     shape = MaterialTheme.shapes.medium,
                     visualTransformation = PasswordVisualTransformation()
                 )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = extraSecret,
-                    onValueChange = { extraSecret = it },
-                    label = { Text("Extra Secret (required for new pairs)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation()
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = extraConfirm,
-                    onValueChange = { extraConfirm = it },
-                    label = { Text("Confirm Extra Secret") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation()
-                )
-                Spacer(Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Button(
                         onClick = {
-                            if (extraSecret.isNotEmpty() && extraSecret != extraConfirm) {
-                                formError = "Extra Secret confirmation does not match"
-                                return@Button
-                            }
-                            formError = null
-                            onSaveEndpoint(host, port, secret, extraSecret)
+                            onSaveEndpoint(host, port, secret)
                             host = ""
                             secret = ""
                             port = ReceiveServer.DEFAULT_PORT.toString()
@@ -554,17 +442,17 @@ fun SenderScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text("Add")
                     }
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     OutlinedButton(onClick = onScanQr, modifier = Modifier.weight(1f)) {
                         Icon(
                             Icons.Default.QrCodeScanner,
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text("Scan QR")
                     }
                 }
@@ -581,7 +469,7 @@ fun SenderScreen(
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(22.dp)
                     )
-                    Spacer(Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Home widget & Quick Settings", fontWeight = FontWeight.SemiBold)
                         Text(
@@ -591,7 +479,7 @@ fun SenderScreen(
                         )
                     }
                 }
-                Spacer(Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(10.dp))
                 FilledTonalButton(
                     onClick = { QsTileHelper.showAddToast(context) },
                     modifier = Modifier.fillMaxWidth()
@@ -612,7 +500,7 @@ fun SenderScreen(
                 shape = MaterialTheme.shapes.large
             ) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text("Test send (all enabled)")
             }
             Text(
@@ -654,7 +542,7 @@ private fun CollapsibleCard(
         }
         AnimatedVisibility(visible = expanded) {
             Column {
-                Spacer(Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 content()
             }
         }
@@ -666,8 +554,7 @@ private fun EndpointRow(
     endpoint: ReceiverEndpoint,
     status: EndpointDeliveryStatus?,
     onToggle: (Boolean) -> Unit,
-    onRemove: () -> Unit,
-    onEditExtra: () -> Unit
+    onRemove: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -692,7 +579,7 @@ private fun EndpointRow(
             }
             Switch(checked = endpoint.enabled, onCheckedChange = onToggle)
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -702,9 +589,8 @@ private fun EndpointRow(
                 false -> "Unreachable"
                 null -> "—"
             }
-            val extra = if (endpoint.extraSecret.isNotEmpty()) "Extra Secret set" else "Legacy"
             Text(
-                "$reach · $extra",
+                reach,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
@@ -715,9 +601,6 @@ private fun EndpointRow(
                     null -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
             )
-            IconButton(onClick = onEditExtra, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.Lock, contentDescription = "Extra Secret")
-            }
             IconButton(onClick = onRemove, modifier = Modifier.size(40.dp)) {
                 Icon(
                     Icons.Default.Delete,
@@ -726,14 +609,17 @@ private fun EndpointRow(
                 )
             }
         }
-        status?.lastError?.takeIf { it.isNotBlank() }?.let { err ->
-            Text(
-                "Last error: ${err.take(80)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.error,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+        // Only show last error while currently unreachable (hide stale timeouts).
+        if (status?.reachable != true) {
+            status?.lastError?.takeIf { it.isNotBlank() }?.let { err ->
+                Text(
+                    "Last error: ${err.take(80)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
         status?.lastSyncedAt?.let { ts ->
             val formatted = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
