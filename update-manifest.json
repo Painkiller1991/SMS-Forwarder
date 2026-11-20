@@ -1,11 +1,11 @@
 {
-  "versionCode": 66,
-  "versionName": "3.1.41-lan",
-  "apkAsset": "SMS-Forwarder-3.1.41-lan.apk",
+  "versionCode": 67,
+  "versionName": "3.1.42-lan",
+  "apkAsset": "SMS-Forwarder-3.1.42-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Fix ListenFlag/SP split-brain so :recv and UI agree on Receive ON",
-    "Idle rebind: remaining-time schedule, corrupt-store safe, mark after rebind",
-    "Sender chip Unreachable when known-down; verify pending counts O(n)"
+    "Receiver: Wi‑Fi lock while listening so LAN stays up in background",
+    "Receiver: peer-visible /health self-check + 75s rebind watchdog",
+    "Receiver: bind 0.0.0.0; notification shows LAN OK / recovering"
   ]
 }

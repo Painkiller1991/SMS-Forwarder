@@ -10,11 +10,13 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -36,11 +38,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import okhttp3.Request
 import java.net.BindException
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
+import java.util.concurrent.TimeUnit
 
 /**
  * LAN listener with an always-visible ON/OFF foreground status notification.
@@ -51,6 +55,7 @@ class ReceiveForegroundService : Service() {
     private var boundHost: String? = null
     private var wifiCallback: ConnectivityManager.NetworkCallback? = null
     private var vpnCallback: ConnectivityManager.NetworkCallback? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private var lastStatus: String = ""
     private var lastTitle: String = ""
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -59,11 +64,18 @@ class ReceiveForegroundService : Service() {
     @Volatile private var pendingUpdateUi = false
     @Volatile private var pendingForceRebind = false
     @Volatile private var tearingDown = false
+    /** Peer-visible LAN /health result for notification honesty (null = unknown / no Wi‑Fi IP). */
+    @Volatile private var lanReachable: Boolean? = null
+    @Volatile private var lastBindElapsedMs: Long = 0L
 
     private val watchdog = object : Runnable {
         override fun run() {
             if (ListenFlag.read(this@ReceiveForegroundService)) {
-                scope.launch { ensureListeningSafe(updateUi = false, forceRebind = false) }
+                scope.launch {
+                    // Soft ensure: LAN isServerAlive() failure triggers force rebind inside.
+                    ensureListeningSafe(updateUi = true, forceRebind = false)
+                    handler.post { updateListeningNotification(force = true) }
+                }
             }
             handler.postDelayed(this, WATCHDOG_MS)
         }
@@ -137,6 +149,7 @@ class ReceiveForegroundService : Service() {
 
     private fun beginListening(forceRebind: Boolean) {
         publishStatus(force = true)
+        acquireWifiLock()
         registerNetworkCallback()
         LastInboundStore.seedIfMissing(this)
         KeepAliveScheduler.schedule(this)
@@ -154,9 +167,11 @@ class ReceiveForegroundService : Service() {
         handler.removeCallbacks(bindRetry)
         pendingForceRebind = false
         pendingUpdateUi = false
+        lanReachable = null
         KeepAliveScheduler.cancel(this)
         IdleRebindScheduler.cancel(this)
         unregisterNetworkCallbacks()
+        releaseWifiLock()
         scope.launch {
             listenMutex.withLock { stopLanServerQuiet() }
             handler.post { publishStatus(force = true) }
@@ -172,6 +187,7 @@ class ReceiveForegroundService : Service() {
             runId = "lan-recv"
         )
         if (ListenFlag.read(this)) {
+            acquireWifiLock()
             KeepAliveScheduler.schedule(this)
             IdleRebindScheduler.ensureScheduled(this)
             ServiceWatchdog.scheduleSoon(this)
@@ -182,13 +198,10 @@ class ReceiveForegroundService : Service() {
     }
 
     /**
-     * While VPN is active, bind all interfaces so inbound LAN is less likely to be
-     * stuck on a Wi‑Fi address isolated by the VPN stack. Notification still shows Wi‑Fi IP.
+     * Always bind all interfaces so a stale Wi‑Fi-IP socket is never the only listen path.
+     * Notification still shows the current Wi‑Fi IP for humans / pairing.
      */
-    private fun desiredBindHost(): String {
-        if (LanNetwork.vpnActive(this)) return ReceiveServer.BIND_ALL
-        return WifiIp.localIpv4(this) ?: ReceiveServer.BIND_ALL
-    }
+    private fun desiredBindHost(): String = ReceiveServer.BIND_ALL
 
     private fun statusTitle(): String =
         if (ListenFlag.read(this)) "Receive ON" else "Receive OFF"
@@ -198,10 +211,52 @@ class ReceiveForegroundService : Service() {
             return "Port closed — tap to open"
         }
         val ip = WifiIp.localIpv4(this)
-            ?: if (isRealLanIp(boundHost)) boundHost!! else boundHost ?: "no-wifi"
+            ?: if (isRealLanIp(boundHost)) boundHost!! else "no-wifi"
         val port = server?.listeningPort ?: ReceiveServer.DEFAULT_PORT
         val vpn = if (LanNetwork.vpnActive(this)) " (VPN)" else ""
-        return if (server != null) "Listening $ip:$port$vpn" else "Starting… $ip:$port"
+        if (server == null) return "Starting… $ip:$port"
+        val lan = when (lanReachable) {
+            true -> " · LAN OK"
+            false -> " · recovering"
+            null -> ""
+        }
+        return "Listening $ip:$port$vpn$lan"
+    }
+
+    @Suppress("DEPRECATION")
+    private fun acquireWifiLock() {
+        if (wifiLock?.isHeld == true) return
+        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        } else {
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        }
+        runCatching {
+            wifiLock = wm.createWifiLock(mode, "smsforwarder:lan_listen").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            AgentDebugLog.log(
+                hypothesisId = "LAN",
+                location = "ReceiveForegroundService.acquireWifiLock",
+                message = "Wi‑Fi lock acquired",
+                data = mapOf("mode" to mode),
+                runId = "lan-calm"
+            )
+        }.onFailure {
+            Log.w(TAG, "Wi‑Fi lock acquire failed", it)
+            wifiLock = null
+        }
+    }
+
+    private fun releaseWifiLock() {
+        runCatching {
+            wifiLock?.let { lock ->
+                if (lock.isHeld) lock.release()
+            }
+        }.onFailure { Log.w(TAG, "Wi‑Fi lock release failed", it) }
+        wifiLock = null
     }
 
     private fun publishStatus(force: Boolean = false) {
@@ -323,6 +378,7 @@ class ReceiveForegroundService : Service() {
         val s = server
         server = null
         boundHost = null
+        lanReachable = null
         if (s != null) {
             runCatching { s.closeAllConnections() }
             runCatching { s.stop() }
@@ -339,16 +395,12 @@ class ReceiveForegroundService : Service() {
     private fun isRealLanIp(host: String?): Boolean =
         !host.isNullOrBlank() && host != ReceiveServer.BIND_ALL
 
-    /** True if the current NanoHTTPD still answers /health locally. */
-    private fun isServerAlive(): Boolean {
-        val s = server ?: return false
-        val port = s.listeningPort.takeIf { it > 0 } ?: ReceiveServer.DEFAULT_PORT
+    private fun probeHttpHealth(host: String, port: Int, timeoutMs: Int = 800): Boolean {
         return runCatching {
-            // Prefer loopback — works for both specific-IP and 0.0.0.0 binds.
-            val url = URL("http://127.0.0.1:$port/health")
+            val url = URL("http://$host:$port/health")
             val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 400
-                readTimeout = 400
+                connectTimeout = timeoutMs
+                readTimeout = timeoutMs
                 requestMethod = "GET"
                 instanceFollowRedirects = false
             }
@@ -357,16 +409,80 @@ class ReceiveForegroundService : Service() {
             } finally {
                 conn.disconnect()
             }
-        }.getOrElse {
-            // Fallback: TCP connect to bound host or loopback.
-            runCatching {
-                Socket().use { sock ->
-                    val host = if (isRealLanIp(boundHost)) boundHost!! else "127.0.0.1"
-                    sock.connect(InetSocketAddress(host, port), 400)
-                    true
-                }
-            }.getOrDefault(false)
+        }.getOrDefault(false)
+    }
+
+    /** GET /health via the Wi‑Fi/Ethernet [Network] socket factory (avoids default-route/VPN). */
+    private fun probeLanHttp(port: Int): Boolean {
+        val lanIp = WifiIp.localIpv4(this) ?: return false
+        return runCatching {
+            val client = LanNetwork.lanHttpClient(this, preferredPeerHost = lanIp)
+                .newBuilder()
+                .connectTimeout(800, TimeUnit.MILLISECONDS)
+                .readTimeout(800, TimeUnit.MILLISECONDS)
+                .callTimeout(1_200, TimeUnit.MILLISECONDS)
+                .build()
+            val request = Request.Builder().url("http://$lanIp:$port/health").get().build()
+            client.newCall(request).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
+    }
+
+    private fun probeLanTcp(port: Int): Boolean {
+        val path = LanNetwork.resolve(this) ?: return false
+        return runCatching {
+            Socket().use { sock ->
+                path.network.bindSocket(sock)
+                sock.connect(InetSocketAddress(path.ipv4, port), 800)
+                true
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Peer-visible LAN health matching what the sender probes.
+     * Loopback success alone is not enough when a Wi‑Fi IP is available.
+     */
+    private fun isServerAlive(): Boolean {
+        val s = server ?: run {
+            lanReachable = false
+            return false
         }
+        val port = s.listeningPort.takeIf { it > 0 } ?: ReceiveServer.DEFAULT_PORT
+        val lanIp = WifiIp.localIpv4(this)
+        val loopbackOk = probeHttpHealth("127.0.0.1", port, timeoutMs = 400)
+
+        if (!lanIp.isNullOrBlank()) {
+            if (probeLanHttp(port) || probeLanTcp(port) ||
+                (isRealLanIp(boundHost) && boundHost != lanIp && probeHttpHealth(boundHost!!, port))
+            ) {
+                lanReachable = true
+                return true
+            }
+            lanReachable = false
+            AgentDebugLog.log(
+                hypothesisId = "RECV_CLOSED",
+                location = "ReceiveForegroundService.isServerAlive",
+                message = "LAN /health failed (loopback=$loopbackOk)",
+                data = mapOf(
+                    "lanIp" to lanIp,
+                    "bound" to (boundHost ?: "none"),
+                    "port" to port,
+                    "loopbackOk" to loopbackOk
+                ),
+                runId = "lan-calm"
+            )
+            // Grace after bind: avoid rebind storms when OEM hairpin blocks self-connect briefly.
+            if (loopbackOk &&
+                SystemClock.elapsedRealtime() - lastBindElapsedMs < BIND_GRACE_MS
+            ) {
+                return true
+            }
+            return false
+        }
+
+        // No Wi‑Fi IP — cannot prove peer reachability; keep socket if loopback answers.
+        lanReachable = if (loopbackOk) null else false
+        return loopbackOk
     }
 
     private suspend fun ensureListeningSafe(updateUi: Boolean, forceRebind: Boolean) {
@@ -406,7 +522,10 @@ class ReceiveForegroundService : Service() {
                     receiveServer.startListening()
                     server = receiveServer
                     boundHost = host
+                    lastBindElapsedMs = SystemClock.elapsedRealtime()
                 }
+                // Confirm peer-visible path immediately (updates lanReachable for notification).
+                val alive = isServerAlive()
                 AgentDebugLog.log(
                     hypothesisId = "LAN",
                     location = "ReceiveForegroundService.startLanServer",
@@ -417,7 +536,8 @@ class ReceiveForegroundService : Service() {
                         "vpn" to LanNetwork.vpnActive(this),
                         "port" to (server?.listeningPort ?: -1),
                         "attempt" to (attempt + 1),
-                        "force" to forceRebind
+                        "force" to forceRebind,
+                        "lanOk" to alive
                     ),
                     runId = "lan-calm"
                 )
@@ -553,6 +673,7 @@ class ReceiveForegroundService : Service() {
         KeepAliveScheduler.cancel(this)
         IdleRebindScheduler.cancel(this)
         unregisterNetworkCallbacks()
+        releaseWifiLock()
         runBlocking {
             listenMutex.withLock { stopLanServerQuiet() }
         }
@@ -565,6 +686,7 @@ class ReceiveForegroundService : Service() {
         handler.removeCallbacks(debounceEnsure)
         handler.removeCallbacks(bindRetry)
         unregisterNetworkCallbacks()
+        releaseWifiLock()
         runBlocking {
             listenMutex.withLock { stopLanServerQuiet() }
         }
@@ -586,7 +708,9 @@ class ReceiveForegroundService : Service() {
     companion object {
         private const val TAG = "ReceiveService"
         private const val NOTIFICATION_ID = 42
-        private const val WATCHDOG_MS = 5 * 60 * 1000L
+        /** LAN self-heal interval — do not wait for UI resume to recover a dead listen path. */
+        private const val WATCHDOG_MS = 75_000L
+        private const val BIND_GRACE_MS = 8_000L
         private const val NETWORK_DEBOUNCE_MS = 400L
         private const val PORT_SETTLE_MS = 700L
         private const val BIND_ATTEMPTS = 6
