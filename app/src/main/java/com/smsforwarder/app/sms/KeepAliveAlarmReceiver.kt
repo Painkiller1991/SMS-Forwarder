@@ -33,6 +33,7 @@ class KeepAliveAlarmReceiver : BroadcastReceiver() {
             AppRole.RECEIVER -> {
                 ReceiveForegroundService.ensure(context)
                 if (prefs.receiveEnabled) {
+                    // Keep-alive must NOT reschedule idle rebind (would push 12h forever).
                     KeepAliveScheduler.schedule(context)
                 }
             }

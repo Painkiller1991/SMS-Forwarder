@@ -440,6 +440,15 @@ private fun AppRoot(
                             Toast.makeText(activity, err, Toast.LENGTH_LONG).show()
                         }
                     },
+                    onRestartListen = {
+                        requestReceiverPermissions()
+                        val err = vm.restartListen(activity)
+                        Toast.makeText(
+                            activity,
+                            err ?: "Restarting listen…",
+                            if (err != null) Toast.LENGTH_LONG else Toast.LENGTH_SHORT
+                        ).show()
+                    },
                     onOpenAutofill = { activity.openAutofillSettings() },
                     onClearInbox = vm::clearInbox,
                     onOpenHistory = { showHistory = true },

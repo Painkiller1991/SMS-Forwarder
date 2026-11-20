@@ -22,8 +22,8 @@ android {
         applicationId = "com.smsforwarder.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 59
-        versionName = "3.1.34-lan"
+        versionCode = 63
+        versionName = "3.1.38-lan"
     }
 
     signingConfigs {

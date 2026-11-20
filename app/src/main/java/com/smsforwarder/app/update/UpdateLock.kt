@@ -5,6 +5,7 @@ import com.smsforwarder.app.BuildConfig
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.data.ListenFlag
 import com.smsforwarder.app.data.Prefs
+import com.smsforwarder.app.net.IdleRebindScheduler
 import com.smsforwarder.app.net.KeepAliveScheduler
 import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.SenderKeepAliveService
@@ -33,6 +34,7 @@ object UpdateLock {
         prefs.senderEnabled = false
         ListenFlag.write(context, false)
         KeepAliveScheduler.cancel(context)
+        IdleRebindScheduler.cancel(context)
         runCatching { ReceiveForegroundService.stop(context) }
         runCatching { SenderKeepAliveService.stop(context) }
     }

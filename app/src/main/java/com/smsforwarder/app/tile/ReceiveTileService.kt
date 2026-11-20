@@ -38,7 +38,7 @@ class ReceiveTileService : TileService() {
                 val next = !ListenFlag.read(this)
                 prefs.receiveEnabled = next
                 if (next) {
-                    ReceiveForegroundService.start(this)
+                    ReceiveForegroundService.forceRebind(this)
                 } else {
                     ReceiveForegroundService.stop(this)
                 }

@@ -318,14 +318,18 @@ fun SenderScreen(
                     Text("Connection status", fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(modifier = Modifier.height(12.dp))
+                // Derive from per-row status so chip never disagrees with "Unreachable" under a device.
+                val enabledEps = state.endpoints.filter { it.enabled }
+                val reachOk = enabledEps.count { state.endpointStatus[it.id]?.reachable == true }
+                val reachActive = reachOk > 0
                 StatusChip(
                     label = when {
                         state.pairCheckInProgress -> "Checking…"
-                        !state.paired -> "No devices"
-                        state.reachable -> "Reachable ${state.reachableCount}/${state.endpointCount}"
-                        else -> "Unreachable 0/${state.endpointCount}"
+                        !state.paired || enabledEps.isEmpty() -> "No devices"
+                        reachActive -> "Reachable $reachOk/${enabledEps.size}"
+                        else -> "Unreachable 0/${enabledEps.size}"
                     },
-                    active = state.reachable
+                    active = reachActive
                 )
                 if (pending > 0) {
                     Spacer(modifier = Modifier.height(8.dp))

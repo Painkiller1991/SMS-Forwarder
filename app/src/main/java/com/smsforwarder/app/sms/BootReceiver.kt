@@ -6,6 +6,7 @@ import android.content.Intent
 import com.smsforwarder.app.SmsForwarderApp
 import com.smsforwarder.app.data.AppRole
 import com.smsforwarder.app.debug.AgentDebugLog
+import com.smsforwarder.app.net.IdleRebindScheduler
 import com.smsforwarder.app.net.KeepAliveScheduler
 import com.smsforwarder.app.net.ReceiveForegroundService
 import com.smsforwarder.app.net.SenderKeepAliveService
@@ -47,6 +48,7 @@ class BootReceiver : BroadcastReceiver() {
                 ReceiveForegroundService.start(context)
                 if (prefs.receiveEnabled) {
                     KeepAliveScheduler.schedule(context)
+                    IdleRebindScheduler.ensureScheduled(context)
                 }
             }
             AppRole.NONE -> Unit

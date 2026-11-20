@@ -24,6 +24,7 @@ import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.net.FanoutResult
 import com.smsforwarder.app.net.ForwardClient
 import com.smsforwarder.app.net.IncomingSms
+import com.smsforwarder.app.net.IdleRebindScheduler
 import com.smsforwarder.app.net.KeepAliveScheduler
 import com.smsforwarder.app.net.LanNetwork
 import com.smsforwarder.app.net.LocalOnlyHotspotController
@@ -53,7 +54,7 @@ data class UiState(
     val receiveEnabled: Boolean = false,
     /** At least one enabled endpoint saved. */
     val paired: Boolean = false,
-    /** Live /health: any enabled endpoint reachable. */
+    /** Live /health: any enabled endpoint reachable (must match [endpointStatus]). */
     val reachable: Boolean = false,
     val reachableCount: Int = 0,
     val endpointCount: Int = 0,
@@ -83,13 +84,25 @@ data class UiState(
     val hotspotError: String? = null,
     /** True when local IP looks like a phone Soft AP / hotspot LAN. */
     val onHotspotLan: Boolean = false
-)
+) {
+    /** Chip counts must follow per-row [endpointStatus], never diverge. */
+    fun withSyncedReachability(): UiState {
+        val enabled = endpoints.filter { it.enabled }
+        val ok = enabled.count { endpointStatus[it.id]?.reachable == true }
+        return copy(
+            reachable = ok > 0,
+            reachableCount = ok,
+            endpointCount = enabled.size
+        )
+    }
+}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as SmsForwarderApp
     private val prefs = app.prefs
     private var pairVerifyJob: Job? = null
+    private val pairVerifyGen = java.util.concurrent.atomic.AtomicInteger(0)
     private val dayStartFlow = MutableStateFlow(DayBoundary.startOfTodayMillis())
     private val hotspot = LocalOnlyHotspotController(application)
     private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
@@ -156,6 +169,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     state.copy(pendingByEndpoint = map, endpointStatus = status)
+                        .withSyncedReachability()
                 }
             }
         }
@@ -437,6 +451,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         pairVerifyJob?.cancel()
+        val gen = pairVerifyGen.incrementAndGet()
         pairVerifyJob = viewModelScope.launch {
             _state.update { it.copy(pairCheckInProgress = true) }
             val ctx = getApplication<Application>()
@@ -468,15 +483,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 FanoutResult(ok, enabled.size, failures.toList()) to status
             }
+            // Drop stale results if a newer verify started.
+            if (gen != pairVerifyGen.get()) return@launch
             _state.update {
                 it.copy(
                     pairCheckInProgress = false,
-                    reachable = result.anyOk,
-                    reachableCount = result.ok,
-                    endpointCount = result.total,
                     paired = prefs.endpointConfigured,
                     endpointStatus = statusMap
-                )
+                ).withSyncedReachability()
             }
             onDone?.invoke(
                 result.anyOk,
@@ -556,6 +570,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (role != AppRole.RECEIVER && prefs.role == AppRole.RECEIVER) {
             prefs.receiveEnabled = false
             KeepAliveScheduler.cancel(ctx)
+            IdleRebindScheduler.cancel(ctx)
             ReceiveForegroundService.teardown(ctx)
         }
         if (role != AppRole.SENDER) {
@@ -610,15 +625,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         if (enabled) {
             prefs.paired = true
-            ReceiveForegroundService.start(context)
+            // Hard rebind so VPN off → toggle ON recovers without force-close.
+            ReceiveForegroundService.forceRebind(context)
             KeepAliveScheduler.schedule(context)
+            // Fresh 12h window when user turns Receive ON.
+            IdleRebindScheduler.scheduleNext(context)
         } else {
             KeepAliveScheduler.cancel(context)
+            IdleRebindScheduler.cancel(context)
             // Keep FGS with Receive OFF status — do not remove the notification.
             ReceiveForegroundService.stop(context)
         }
         refreshFromPrefs()
         StatusWidgetProvider.requestUpdate(getApplication())
+        return null
+    }
+
+    /** Restart LAN listen after VPN / bind failure without toggling OFF. */
+    fun restartListen(context: Context): String? {
+        if (UpdateLock.isActive(prefs)) {
+            refreshFromPrefs()
+            return "Update required before listening"
+        }
+        if (!prefs.receiveEnabled) {
+            return setReceiveEnabled(context, true)
+        }
+        ReceiveForegroundService.forceRebind(context)
+        KeepAliveScheduler.schedule(context)
+        IdleRebindScheduler.ensureScheduled(context)
+        refreshFromPrefs()
         return null
     }
 
@@ -745,12 +780,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ),
                 runId = "lan"
             )
-            _state.update {
-                it.copy(
-                    reachable = result.anyOk,
-                    reachableCount = result.ok,
-                    endpointCount = result.total
-                )
+            // Keep chip + per-row status in sync (was updating chip only → Reachable 1/1 + Unreachable).
+            val failedNames = result.failures.toSet()
+            _state.update { state ->
+                val status = state.endpointStatus.toMutableMap()
+                for (ep in prefs.enabledEndpoints()) {
+                    val prev = status[ep.id] ?: EndpointDeliveryStatus(ep.id)
+                    val reached = when {
+                        result.allOk -> true
+                        result.ok == 0 -> false
+                        else -> ep.displayName !in failedNames
+                    }
+                    status[ep.id] = prev.copy(
+                        reachable = reached,
+                        lastError = if (reached) null else prev.lastError
+                    )
+                }
+                state.copy(endpointStatus = status).withSyncedReachability()
             }
             // Test bypasses outbox; once LAN works, drain stuck pending sync.
             if (result.anyOk && _state.value.pendingSyncCount > 0) {

@@ -21,6 +21,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.smsforwarder.app.R
 import com.smsforwarder.app.SmsForwarderApp
+import com.smsforwarder.app.data.LastInboundStore
 import com.smsforwarder.app.data.ListenFlag
 import com.smsforwarder.app.data.SecretStore
 import com.smsforwarder.app.debug.AgentDebugLog
@@ -32,13 +33,18 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.net.BindException
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.URL
 
 /**
  * LAN listener with an always-visible ON/OFF foreground status notification.
- * VPN/Wi‑Fi transitions are debounced and anti-flapped while listening.
+ * VPN/Wi‑Fi transitions force a hard rebind so a dead socket is never kept after VPN drops.
  */
 class ReceiveForegroundService : Service() {
     private var server: ReceiveServer? = null
@@ -51,12 +57,13 @@ class ReceiveForegroundService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val listenMutex = Mutex()
     @Volatile private var pendingUpdateUi = false
+    @Volatile private var pendingForceRebind = false
     @Volatile private var tearingDown = false
 
     private val watchdog = object : Runnable {
         override fun run() {
             if (ListenFlag.read(this@ReceiveForegroundService)) {
-                scope.launch { ensureListeningSafe(updateUi = false) }
+                scope.launch { ensureListeningSafe(updateUi = false, forceRebind = false) }
             }
             handler.postDelayed(this, WATCHDOG_MS)
         }
@@ -64,15 +71,17 @@ class ReceiveForegroundService : Service() {
 
     private val debounceEnsure = Runnable {
         val ui = pendingUpdateUi
+        val force = pendingForceRebind
         pendingUpdateUi = false
+        pendingForceRebind = false
         if (ListenFlag.read(this@ReceiveForegroundService)) {
-            scope.launch { ensureListeningSafe(updateUi = ui) }
+            scope.launch { ensureListeningSafe(updateUi = ui, forceRebind = force) }
         }
     }
 
     private val bindRetry = Runnable {
         if (ListenFlag.read(this@ReceiveForegroundService)) {
-            scope.launch { ensureListeningSafe(updateUi = true) }
+            scope.launch { ensureListeningSafe(updateUi = true, forceRebind = true) }
         }
     }
 
@@ -103,30 +112,37 @@ class ReceiveForegroundService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_STOP -> {
-                // Listen OFF: keep FGS with clear OFF status (do not remove notification).
                 if (listenOn) {
-                    beginListening()
+                    beginListening(forceRebind = true)
                 } else {
                     showOffStatus()
                 }
                 return START_STICKY
             }
+            ACTION_FORCE_REBIND -> {
+                if (listenOn) beginListening(forceRebind = true) else showOffStatus()
+                return START_STICKY
+            }
             ACTION_ENSURE -> {
-                if (listenOn) beginListening() else showOffStatus()
+                if (listenOn) beginListening(forceRebind = false) else showOffStatus()
                 return START_STICKY
             }
             else -> {
-                if (listenOn) beginListening() else showOffStatus()
+                // Default start (Receive ON) always hard-rebinds.
+                if (listenOn) beginListening(forceRebind = true) else showOffStatus()
             }
         }
         return START_STICKY
     }
 
-    private fun beginListening() {
+    private fun beginListening(forceRebind: Boolean) {
         publishStatus(force = true)
         registerNetworkCallback()
+        LastInboundStore.seedIfMissing(this)
         KeepAliveScheduler.schedule(this)
-        scope.launch { ensureListeningSafe(updateUi = true) }
+        // Do not push the 12h alarm forward on every ENSURE — only arm if missing.
+        IdleRebindScheduler.ensureScheduled(this)
+        scope.launch { ensureListeningSafe(updateUi = true, forceRebind = forceRebind) }
         handler.removeCallbacks(watchdog)
         handler.postDelayed(watchdog, WATCHDOG_MS)
     }
@@ -136,10 +152,15 @@ class ReceiveForegroundService : Service() {
         handler.removeCallbacks(watchdog)
         handler.removeCallbacks(debounceEnsure)
         handler.removeCallbacks(bindRetry)
+        pendingForceRebind = false
+        pendingUpdateUi = false
         KeepAliveScheduler.cancel(this)
+        IdleRebindScheduler.cancel(this)
         unregisterNetworkCallbacks()
-        stopLanServerQuiet()
-        publishStatus(force = true)
+        scope.launch {
+            listenMutex.withLock { stopLanServerQuiet() }
+            handler.post { publishStatus(force = true) }
+        }
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -152,15 +173,22 @@ class ReceiveForegroundService : Service() {
         )
         if (ListenFlag.read(this)) {
             KeepAliveScheduler.schedule(this)
+            IdleRebindScheduler.ensureScheduled(this)
             ServiceWatchdog.scheduleSoon(this)
-            scope.launch { ensureListeningSafe(updateUi = false) }
+            scope.launch { ensureListeningSafe(updateUi = false, forceRebind = false) }
         }
         publishStatus(force = true)
         super.onTaskRemoved(rootIntent)
     }
 
-    private fun desiredBindHost(): String =
-        WifiIp.localIpv4(this) ?: ReceiveServer.BIND_ALL
+    /**
+     * While VPN is active, bind all interfaces so inbound LAN is less likely to be
+     * stuck on a Wi‑Fi address isolated by the VPN stack. Notification still shows Wi‑Fi IP.
+     */
+    private fun desiredBindHost(): String {
+        if (LanNetwork.vpnActive(this)) return ReceiveServer.BIND_ALL
+        return WifiIp.localIpv4(this) ?: ReceiveServer.BIND_ALL
+    }
 
     private fun statusTitle(): String =
         if (ListenFlag.read(this)) "Receive ON" else "Receive OFF"
@@ -169,10 +197,8 @@ class ReceiveForegroundService : Service() {
         if (!ListenFlag.read(this)) {
             return "Port closed — tap to open"
         }
-        val ip = when {
-            boundHost != null && boundHost != ReceiveServer.BIND_ALL -> boundHost!!
-            else -> WifiIp.localIpv4(this) ?: boundHost ?: "no-wifi"
-        }
+        val ip = WifiIp.localIpv4(this)
+            ?: if (isRealLanIp(boundHost)) boundHost!! else boundHost ?: "no-wifi"
         val port = server?.listeningPort ?: ReceiveServer.DEFAULT_PORT
         val vpn = if (LanNetwork.vpnActive(this)) " (VPN)" else ""
         return if (server != null) "Listening $ip:$port$vpn" else "Starting… $ip:$port"
@@ -217,9 +243,10 @@ class ReceiveForegroundService : Service() {
         }
     }
 
-    private fun scheduleEnsure(updateUi: Boolean) {
+    private fun scheduleEnsure(updateUi: Boolean, forceRebind: Boolean = false) {
         if (!ListenFlag.read(this)) return
         if (updateUi) pendingUpdateUi = true
+        if (forceRebind) pendingForceRebind = true
         handler.removeCallbacks(debounceEnsure)
         handler.postDelayed(debounceEnsure, NETWORK_DEBOUNCE_MS)
     }
@@ -229,14 +256,14 @@ class ReceiveForegroundService : Service() {
         if (wifiCallback == null) {
             val wifiCb = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    scheduleEnsure(updateUi = true)
+                    scheduleEnsure(updateUi = true, forceRebind = true)
                 }
 
                 override fun onCapabilitiesChanged(
                     network: Network,
                     networkCapabilities: NetworkCapabilities
                 ) {
-                    scheduleEnsure(updateUi = true)
+                    scheduleEnsure(updateUi = true, forceRebind = false)
                 }
 
                 override fun onLost(network: Network) {
@@ -245,7 +272,7 @@ class ReceiveForegroundService : Service() {
                         lastTitle = statusTitle()
                         startForegroundNow(buildStatusNotification(lastTitle, lastStatus))
                     }
-                    scheduleEnsure(updateUi = true)
+                    scheduleEnsure(updateUi = true, forceRebind = true)
                 }
             }
             wifiCallback = wifiCb
@@ -259,18 +286,19 @@ class ReceiveForegroundService : Service() {
         if (vpnCallback == null) {
             val vpnCb = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    scheduleEnsure(updateUi = true)
+                    scheduleEnsure(updateUi = true, forceRebind = true)
                 }
 
                 override fun onCapabilitiesChanged(
                     network: Network,
                     networkCapabilities: NetworkCapabilities
                 ) {
-                    scheduleEnsure(updateUi = true)
+                    scheduleEnsure(updateUi = true, forceRebind = true)
                 }
 
                 override fun onLost(network: Network) {
-                    scheduleEnsure(updateUi = true)
+                    // VPN dropped — hard rebind so we do not keep a dead socket on the same IP.
+                    scheduleEnsure(updateUi = true, forceRebind = true)
                 }
             }
             vpnCallback = vpnCb
@@ -310,23 +338,54 @@ class ReceiveForegroundService : Service() {
     private fun isRealLanIp(host: String?): Boolean =
         !host.isNullOrBlank() && host != ReceiveServer.BIND_ALL
 
-    private suspend fun ensureListeningSafe(updateUi: Boolean) {
-        listenMutex.withLock {
-            ensureListening(updateUi)
+    /** True if the current NanoHTTPD still answers /health locally. */
+    private fun isServerAlive(): Boolean {
+        val s = server ?: return false
+        val port = s.listeningPort.takeIf { it > 0 } ?: ReceiveServer.DEFAULT_PORT
+        return runCatching {
+            // Prefer loopback — works for both specific-IP and 0.0.0.0 binds.
+            val url = URL("http://127.0.0.1:$port/health")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 400
+                readTimeout = 400
+                requestMethod = "GET"
+                instanceFollowRedirects = false
+            }
+            try {
+                conn.responseCode in 200..299
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrElse {
+            // Fallback: TCP connect to bound host or loopback.
+            runCatching {
+                Socket().use { sock ->
+                    val host = if (isRealLanIp(boundHost)) boundHost!! else "127.0.0.1"
+                    sock.connect(InetSocketAddress(host, port), 400)
+                    true
+                }
+            }.getOrDefault(false)
         }
     }
 
-    private suspend fun startLanServer(updateUi: Boolean) {
+    private suspend fun ensureListeningSafe(updateUi: Boolean, forceRebind: Boolean) {
+        listenMutex.withLock {
+            ensureListening(updateUi, forceRebind)
+        }
+    }
+
+    private suspend fun startLanServer(updateUi: Boolean, forceRebind: Boolean) {
         val app = application as SmsForwarderApp
         val prefs = app.prefs
         if (!ListenFlag.read(this)) return
         val host = desiredBindHost()
-        if (server != null && boundHost == host) {
+        if (!forceRebind && server != null && boundHost == host && isServerAlive()) {
             if (updateUi) handler.post { updateListeningNotification(force = true) }
             return
         }
         if (server != null) {
             stopLanServerQuiet()
+            delay(PORT_SETTLE_MS)
         }
         SecretStore.write(this, prefs.sharedSecret)
         var lastError: Exception? = null
@@ -337,7 +396,6 @@ class ReceiveForegroundService : Service() {
                         hostname = host,
                         port = ReceiveServer.DEFAULT_PORT,
                         sharedSecretProvider = {
-                            // QR secret only (Extra Secret feature removed).
                             SecretStore.read(this) ?: prefs.sharedSecret
                         },
                         onSms = { sender, body, timestamp, msgId, quiet, test ->
@@ -357,7 +415,8 @@ class ReceiveForegroundService : Service() {
                         "wifiIp" to (WifiIp.localIpv4(this) ?: "?"),
                         "vpn" to LanNetwork.vpnActive(this),
                         "port" to (server?.listeningPort ?: -1),
-                        "attempt" to (attempt + 1)
+                        "attempt" to (attempt + 1),
+                        "force" to forceRebind
                     ),
                     runId = "lan-calm"
                 )
@@ -385,21 +444,49 @@ class ReceiveForegroundService : Service() {
         handler.postDelayed(bindRetry, BIND_FAIL_RETRY_MS)
     }
 
-    private suspend fun ensureListening(updateUi: Boolean) {
+    private suspend fun ensureListening(updateUi: Boolean, forceRebind: Boolean) {
         if (!ListenFlag.read(this)) return
         val host = desiredBindHost()
-        if (server != null && boundHost == host) {
-            if (updateUi) handler.post { updateListeningNotification(force = false) }
+
+        if (forceRebind) {
+            AgentDebugLog.log(
+                hypothesisId = "RECV_FORCE",
+                location = "ReceiveForegroundService.ensureListening",
+                message = "Force rebind",
+                data = mapOf(
+                    "was" to (boundHost ?: "none"),
+                    "want" to host,
+                    "vpn" to LanNetwork.vpnActive(this),
+                    "alive" to (server != null && isServerAlive())
+                ),
+                runId = "lan-calm"
+            )
+            startLanServer(updateUi = true, forceRebind = true)
             return
         }
-        // Anti-flap: keep a real LAN bind when resolve briefly returns null → 0.0.0.0
+
+        if (server != null && boundHost == host) {
+            if (isServerAlive()) {
+                if (updateUi) handler.post { updateListeningNotification(force = false) }
+                return
+            }
+            // Same host string but dead socket — rebind.
+            startLanServer(updateUi = true, forceRebind = true)
+            return
+        }
+
+        // Anti-flap: keep a live LAN bind when resolve briefly returns null → 0.0.0.0
+        // (and VPN is not forcing BIND_ALL).
         if (server != null &&
             isRealLanIp(boundHost) &&
-            host == ReceiveServer.BIND_ALL
+            host == ReceiveServer.BIND_ALL &&
+            !LanNetwork.vpnActive(this) &&
+            isServerAlive()
         ) {
             if (updateUi) handler.post { updateListeningNotification(force = false) }
             return
         }
+
         AgentDebugLog.log(
             hypothesisId = "RECV_CLOSED",
             location = "ReceiveForegroundService.ensureListening",
@@ -411,7 +498,7 @@ class ReceiveForegroundService : Service() {
             ),
             runId = "lan-calm"
         )
-        startLanServer(updateUi = true)
+        startLanServer(updateUi = true, forceRebind = false)
     }
 
     private fun handleIncoming(
@@ -463,8 +550,11 @@ class ReceiveForegroundService : Service() {
         handler.removeCallbacks(debounceEnsure)
         handler.removeCallbacks(bindRetry)
         KeepAliveScheduler.cancel(this)
+        IdleRebindScheduler.cancel(this)
         unregisterNetworkCallbacks()
-        stopLanServerQuiet()
+        runBlocking {
+            listenMutex.withLock { stopLanServerQuiet() }
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -474,9 +564,10 @@ class ReceiveForegroundService : Service() {
         handler.removeCallbacks(debounceEnsure)
         handler.removeCallbacks(bindRetry)
         unregisterNetworkCallbacks()
-        stopLanServerQuiet()
+        runBlocking {
+            listenMutex.withLock { stopLanServerQuiet() }
+        }
         scope.cancel()
-        // Restart status FGS for receiver role so ON/OFF stays visible (not after teardown).
         val app = applicationContext as? SmsForwarderApp
         if (!tearingDown &&
             app != null &&
@@ -484,6 +575,7 @@ class ReceiveForegroundService : Service() {
         ) {
             if (ListenFlag.read(applicationContext)) {
                 KeepAliveScheduler.schedule(applicationContext)
+                IdleRebindScheduler.ensureScheduled(applicationContext)
             }
             ensure(applicationContext)
         }
@@ -495,17 +587,21 @@ class ReceiveForegroundService : Service() {
         private const val NOTIFICATION_ID = 42
         private const val WATCHDOG_MS = 5 * 60 * 1000L
         private const val NETWORK_DEBOUNCE_MS = 400L
-        private const val BIND_ATTEMPTS = 3
-        private const val BIND_RETRY_MS = 250L
+        private const val PORT_SETTLE_MS = 700L
+        private const val BIND_ATTEMPTS = 6
+        private const val BIND_RETRY_MS = 400L
         private const val BIND_FAIL_RETRY_MS = 2_000L
         const val ACTION_STOP = "com.smsforwarder.app.STOP_RECEIVE"
         const val ACTION_ENSURE = "com.smsforwarder.app.ENSURE_RECEIVE"
+        const val ACTION_FORCE_REBIND = "com.smsforwarder.app.FORCE_REBIND_RECEIVE"
         const val ACTION_TEARDOWN = "com.smsforwarder.app.TEARDOWN_RECEIVE"
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(
                 context,
-                Intent(context, ReceiveForegroundService::class.java)
+                Intent(context, ReceiveForegroundService::class.java).apply {
+                    action = ACTION_FORCE_REBIND
+                }
             )
         }
 
@@ -514,6 +610,16 @@ class ReceiveForegroundService : Service() {
                 context,
                 Intent(context, ReceiveForegroundService::class.java).apply {
                     action = ACTION_ENSURE
+                }
+            )
+        }
+
+        /** Hard stop + rebind listen (VPN recovery / Restart listen). */
+        fun forceRebind(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, ReceiveForegroundService::class.java).apply {
+                    action = ACTION_FORCE_REBIND
                 }
             )
         }

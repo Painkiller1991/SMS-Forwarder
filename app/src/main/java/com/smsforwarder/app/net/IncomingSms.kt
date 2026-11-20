@@ -2,6 +2,7 @@ package com.smsforwarder.app.net
 
 import android.util.Log
 import com.smsforwarder.app.SmsForwarderApp
+import com.smsforwarder.app.data.LastInboundStore
 import com.smsforwarder.app.data.MessageEntity
 import com.smsforwarder.app.debug.AgentDebugLog
 import com.smsforwarder.app.notify.InboxNotifier
@@ -41,6 +42,8 @@ object IncomingSms {
             if (!isTest && !msgId.isNullOrBlank()) {
                 val existing = dao.findIdByMsgId(msgId)
                 if (existing != null) {
+                    // Retries still prove the LAN pipe is alive — reset idle clock.
+                    LastInboundStore.touch(app)
                     AgentDebugLog.log(
                         hypothesisId = "NOTIF",
                         location = "IncomingSms.acceptBlocking",
@@ -60,6 +63,7 @@ object IncomingSms {
                     runId = "lan-calm"
                 )
                 // Prove the pipe without polluting inbox / OTP autofill.
+                LastInboundStore.touch(app)
                 if (!quiet) {
                     InboxNotifier.show(app, sender, body, otp = null)
                 }
@@ -86,6 +90,7 @@ object IncomingSms {
                     msgId = msgId
                 )
             )
+            LastInboundStore.touch(app, timestamp)
             AgentDebugLog.log(
                 hypothesisId = "NOTIF",
                 location = "IncomingSms.acceptBlocking",

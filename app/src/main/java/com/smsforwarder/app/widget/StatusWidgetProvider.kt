@@ -48,7 +48,7 @@ class StatusWidgetProvider : AppWidgetProvider() {
             AppRole.RECEIVER -> {
                 val next = !ListenFlag.read(context)
                 prefs.receiveEnabled = next
-                if (next) ReceiveForegroundService.start(context)
+                if (next) ReceiveForegroundService.forceRebind(context)
                 else ReceiveForegroundService.stop(context)
             }
             AppRole.SENDER -> {

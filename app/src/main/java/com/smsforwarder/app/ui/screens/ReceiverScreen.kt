@@ -80,6 +80,7 @@ fun ReceiverScreen(
     needsBatteryUnrestricted: Boolean,
     needsAutofillSetup: Boolean,
     onToggleReceive: (Boolean) -> Unit,
+    onRestartListen: () -> Unit,
     onOpenAutofill: () -> Unit,
     onClearInbox: () -> Unit,
     onOpenHistory: () -> Unit,
@@ -274,12 +275,26 @@ fun ReceiverScreen(
                         Spacer(Modifier.height(12.dp))
                         Text(
                             if (state.localIp.isNotBlank()) {
-                                "VPN on — listening on Wi‑Fi ${state.localIp}. If the sender still cannot reach you, exclude this app from the VPN or turn off VPN lockdown."
+                                "VPN on — LAN inbound is often blocked. Exclude SMS WiFi Forwarder from the VPN (or disable Always-on / lockdown), then tap Restart listen. Pairing IP: ${state.localIp}."
                             } else {
-                                "VPN on — waiting for a Wi‑Fi address. If receive fails, exclude this app from the VPN or turn off VPN lockdown."
+                                "VPN on — waiting for Wi‑Fi. Exclude this app from the VPN or turn off lockdown, then Restart listen."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
+                    if (state.receiveEnabled) {
+                        Spacer(Modifier.height(12.dp))
+                        FilledTonalButton(
+                            onClick = onRestartListen,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Restart listen")
+                        }
+                        Text(
+                            "Use after turning VPN off if the sender still says Unreachable (no force-close needed).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }

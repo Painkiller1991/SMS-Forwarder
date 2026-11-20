@@ -76,6 +76,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".sms.IdleRebindReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".sms.ServiceWatchdogReceiver"
             android:exported="false" />
 
