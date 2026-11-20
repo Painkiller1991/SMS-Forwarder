@@ -97,10 +97,13 @@ class Prefs(context: Context) {
 
     var receiveEnabled: Boolean
         get() {
-            if (File(appContext.filesDir, "listen_enabled.flag").exists()) {
-                return ListenFlag.read(appContext)
+            // Always keep the cross-process flag in sync with SP when the file is missing.
+            if (!ListenFlag.exists(appContext)) {
+                val fromSp = sp.getBoolean(KEY_RECEIVE_ENABLED, false)
+                ListenFlag.write(appContext, fromSp)
+                return fromSp
             }
-            return sp.getBoolean(KEY_RECEIVE_ENABLED, false)
+            return ListenFlag.read(appContext)
         }
         set(value) {
             sp.edit().putBoolean(KEY_RECEIVE_ENABLED, value).commit()
@@ -158,6 +161,11 @@ class Prefs(context: Context) {
             EndpointStore.write(appContext, sp.getString(KEY_ENDPOINTS, null) ?: "[]")
         }
         ExtraSecretStore.write(appContext, "")
+        // Migrate listen flag from SP so :recv / idle / UI never disagree after upgrade.
+        ListenFlag.migrateFromSharedPreferencesIfMissing(
+            appContext,
+            sp.getBoolean(KEY_RECEIVE_ENABLED, false)
+        )
     }
 
     /** UI process only: push endpoints file so :send/:recv see current pairing. */

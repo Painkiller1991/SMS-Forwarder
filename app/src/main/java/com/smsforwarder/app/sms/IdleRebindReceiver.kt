@@ -18,8 +18,9 @@ class IdleRebindReceiver : BroadcastReceiver() {
         val app = context.applicationContext as? SmsForwarderApp ?: return
         val prefs = app.prefs
 
+        UpdateLock.clearIfSatisfied(prefs)
         if (UpdateLock.isActive(prefs)) {
-            // Engage already cancelled; do not reschedule under lock.
+            IdleRebindScheduler.cancel(context)
             return
         }
         if (prefs.role != AppRole.RECEIVER) {
@@ -27,17 +28,36 @@ class IdleRebindReceiver : BroadcastReceiver() {
             return
         }
 
-        // Either flag may lag across processes — keep the chain alive if either says ON.
-        val listenOn = ListenFlag.read(context) || prefs.receiveEnabled
-        if (!listenOn) {
+        // Migrate flag if needed, then trust ListenFlag (same source as :recv).
+        val listenOn = prefs.receiveEnabled
+        if (!listenOn && !ListenFlag.read(context)) {
+            IdleRebindScheduler.cancel(context)
+            return
+        }
+        if (!ListenFlag.read(context) && listenOn) {
+            ListenFlag.write(context, true)
+        }
+        if (!ListenFlag.read(context)) {
             IdleRebindScheduler.cancel(context)
             return
         }
 
         val now = System.currentTimeMillis()
-        val lastInbound = LastInboundStore.lastAt(context).takeIf { it > 0L } ?: now
+        val lastInbound = LastInboundStore.lastAt(context)
+        val inboundAnchor = when {
+            lastInbound == LastInboundStore.CORRUPT -> {
+                // Corrupt store — force a rebind rather than resetting the clock to now.
+                now - IdleRebindScheduler.INTERVAL_MS
+            }
+            lastInbound > 0L -> lastInbound
+            else -> LastInboundStore.seedIfMissing(context, now).let { seeded ->
+                if (seeded == LastInboundStore.CORRUPT) now - IdleRebindScheduler.INTERVAL_MS
+                else if (seeded > 0L) seeded
+                else now
+            }
+        }
         val lastRebind = LastInboundStore.lastIdleRebindAt(context)
-        val idleMs = now - lastInbound
+        val idleMs = now - inboundAnchor
         val sinceRebind = if (lastRebind > 0L) now - lastRebind else Long.MAX_VALUE
         val shouldRebind =
             idleMs >= IdleRebindScheduler.INTERVAL_MS &&
@@ -56,11 +76,22 @@ class IdleRebindReceiver : BroadcastReceiver() {
         )
 
         if (shouldRebind) {
-            LastInboundStore.markIdleRebind(context, now)
             ReceiveForegroundService.forceRebind(context)
+            // Mark only after requesting rebind so a failed path can retry next window.
+            LastInboundStore.markIdleRebind(context, now)
+            IdleRebindScheduler.scheduleNext(context)
+        } else {
+            // Early inexact wake: schedule remaining time, not a fresh full 12h.
+            val remainIdle = (IdleRebindScheduler.INTERVAL_MS - idleMs).coerceAtLeast(60_000L)
+            val remainRebind = if (sinceRebind == Long.MAX_VALUE) {
+                IdleRebindScheduler.INTERVAL_MS
+            } else {
+                (IdleRebindScheduler.INTERVAL_MS - sinceRebind).coerceAtLeast(60_000L)
+            }
+            IdleRebindScheduler.scheduleIn(
+                context,
+                minOf(remainIdle, remainRebind).coerceAtMost(IdleRebindScheduler.INTERVAL_MS)
+            )
         }
-
-        // Always advance the next 12h window after a tick.
-        IdleRebindScheduler.scheduleNext(context)
     }
 }

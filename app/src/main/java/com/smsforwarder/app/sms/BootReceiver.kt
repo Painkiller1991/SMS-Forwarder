@@ -45,10 +45,12 @@ class BootReceiver : BroadcastReceiver() {
             }
             AppRole.RECEIVER -> {
                 // Always show Receive ON/OFF status notification for receiver role.
+                // elapsedRealtime deadlines are invalid across reboot — clear then re-arm.
+                IdleRebindScheduler.invalidateAfterBoot(context)
                 ReceiveForegroundService.start(context)
                 if (prefs.receiveEnabled) {
                     KeepAliveScheduler.schedule(context)
-                    IdleRebindScheduler.ensureScheduled(context)
+                    IdleRebindScheduler.scheduleNext(context)
                 }
             }
             AppRole.NONE -> Unit

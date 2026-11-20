@@ -320,14 +320,19 @@ fun SenderScreen(
                 Spacer(modifier = Modifier.height(12.dp))
                 // Derive from per-row status so chip never disagrees with "Unreachable" under a device.
                 val enabledEps = state.endpoints.filter { it.enabled }
-                val reachOk = enabledEps.count { state.endpointStatus[it.id]?.reachable == true }
+                val reachFlags = enabledEps.map { state.endpointStatus[it.id]?.reachable }
+                val reachOk = reachFlags.count { it == true }
+                val reachKnownFail = reachFlags.count { it == false }
+                val reachUnknown = reachFlags.any { it == null }
                 val reachActive = reachOk > 0
                 StatusChip(
                     label = when {
                         state.pairCheckInProgress -> "Checking…"
                         !state.paired || enabledEps.isEmpty() -> "No devices"
                         reachActive -> "Reachable $reachOk/${enabledEps.size}"
-                        else -> "Unreachable 0/${enabledEps.size}"
+                        // All still unknown → dash; any known failures with none up → Unreachable.
+                        reachUnknown && reachKnownFail == 0 -> "—"
+                        else -> "Unreachable $reachKnownFail/${enabledEps.size}"
                     },
                     active = reachActive
                 )

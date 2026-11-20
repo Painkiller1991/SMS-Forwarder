@@ -293,7 +293,8 @@ class ReceiveForegroundService : Service() {
                     network: Network,
                     networkCapabilities: NetworkCapabilities
                 ) {
-                    scheduleEnsure(updateUi = true, forceRebind = true)
+                    // Soft ensure only — capability chatter must not flap the listen socket.
+                    scheduleEnsure(updateUi = true, forceRebind = false)
                 }
 
                 override fun onLost(network: Network) {

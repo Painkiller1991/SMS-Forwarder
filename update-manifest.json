@@ -1,10 +1,11 @@
 {
-  "versionCode": 63,
-  "versionName": "3.1.38-lan",
-  "apkAsset": "SMS-Forwarder-3.1.38-lan.apk",
+  "versionCode": 66,
+  "versionName": "3.1.41-lan",
+  "apkAsset": "SMS-Forwarder-3.1.41-lan.apk",
   "forceUpdate": false,
   "changelog": [
-    "Fix sender chip Reachable 1/1 while row showed Unreachable",
-    "Sync connection chip from per-device health status"
+    "Fix ListenFlag/SP split-brain so :recv and UI agree on Receive ON",
+    "Idle rebind: remaining-time schedule, corrupt-store safe, mark after rebind",
+    "Sender chip Unreachable when known-down; verify pending counts O(n)"
   ]
 }

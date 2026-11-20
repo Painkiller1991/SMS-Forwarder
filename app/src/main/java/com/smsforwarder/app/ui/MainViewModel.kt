@@ -126,6 +126,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!UpdateLock.isActive(prefs)) {
             if (prefs.role == AppRole.RECEIVER) {
                 ReceiveForegroundService.ensure(application)
+                if (prefs.receiveEnabled) {
+                    IdleRebindScheduler.ensureScheduled(application)
+                }
             }
             if (prefs.role == AppRole.SENDER && prefs.senderEnabled && prefs.endpointConfigured) {
                 startSenderKeepAlive()
@@ -227,9 +230,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         _state.update { state ->
             val status = state.endpointStatus.mapValues { (_, s) ->
-                if (count == 0) s.copy(pendingCount = 0, lastError = null) else s
+                // Clear pending counts only — keep lastError while unreachable.
+                if (count == 0) s.copy(pendingCount = 0) else s
             }
             state.copy(pendingSyncCount = count, endpointStatus = status)
+                .withSyncedReachability()
         }
         // #region agent log
         AgentDebugLog.log(
@@ -460,6 +465,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 var ok = 0
                 val status = mutableMapOf<String, EndpointDeliveryStatus>()
                 val dao = app.database.outboxDao()
+                val pendingById = dao.pendingCountsByEndpoint()
+                    .associate { it.endpointId to it.cnt }
                 for (ep in enabled) {
                     val reachable = ForwardClient.health(ctx, ep.host, ep.port).isSuccess
                     if (reachable) {
@@ -469,8 +476,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         failures.add(ep.displayName)
                     }
-                    val pending = dao.pendingCountsByEndpoint()
-                        .firstOrNull { it.endpointId == ep.id }?.cnt ?: 0
+                    val pending = pendingById[ep.id] ?: 0
                     val errRow = if (reachable) null else dao.latestErrorForEndpoint(ep.id)
                     val syncedAt = dao.lastSyncedAt(ep.id)
                     status[ep.id] = EndpointDeliveryStatus(
@@ -759,15 +765,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onDone(false, "Add a receiver first")
                 return@launch
             }
+            // Invalidate in-flight /health verify; show Checking… during the LAN test.
+            pairVerifyJob?.cancel()
+            pairVerifyGen.incrementAndGet()
+            _state.update { it.copy(pairCheckInProgress = true) }
             val body = "TEST LAN — OTP 123456 — ${System.currentTimeMillis()}"
-            val result = withContext(Dispatchers.IO) {
-                ForwardClient.forwardToAll(
-                    context = getApplication(),
-                    endpoints = prefs.enabledEndpoints(),
-                    sender = "TEST",
-                    body = body,
-                    test = true
-                )
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    ForwardClient.forwardToAll(
+                        context = getApplication(),
+                        endpoints = prefs.enabledEndpoints(),
+                        sender = "TEST",
+                        body = body,
+                        test = true
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(pairCheckInProgress = false) }
+                onDone(false, e.message?.take(80) ?: "LAN test failed")
+                return@launch
             }
             AgentDebugLog.log(
                 hypothesisId = "LAN",
@@ -780,7 +796,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ),
                 runId = "lan"
             )
-            // Keep chip + per-row status in sync (was updating chip only → Reachable 1/1 + Unreachable).
+            // Always apply UI from the test (freshest LAN proof). Bump gen again so a
+            // verify that started mid-test cannot overwrite these rows afterward.
+            pairVerifyGen.incrementAndGet()
             val failedNames = result.failures.toSet()
             _state.update { state ->
                 val status = state.endpointStatus.toMutableMap()
@@ -796,11 +814,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         lastError = if (reached) null else prev.lastError
                     )
                 }
-                state.copy(endpointStatus = status).withSyncedReachability()
+                state.copy(
+                    pairCheckInProgress = false,
+                    endpointStatus = status
+                ).withSyncedReachability()
             }
             // Test bypasses outbox; once LAN works, drain stuck pending sync.
             if (result.anyOk && _state.value.pendingSyncCount > 0) {
-                // #region agent log
                 AgentDebugLog.log(
                     hypothesisId = "H4",
                     location = "MainViewModel.testSendToReceiver.drain",
@@ -808,7 +828,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     data = mapOf("pendingUi" to _state.value.pendingSyncCount),
                     runId = "drain-debug"
                 )
-                // #endregion
                 SmsForwardService.drain(getApplication())
             }
             onDone(result.anyOk, result.summary())
